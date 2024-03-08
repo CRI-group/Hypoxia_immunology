@@ -1,0 +1,1637 @@
+---
+title: "hypoxia_postprocessing"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# install.packages("readxl")
+# install.packages("lemon")
+# install.packages("gplots")
+#install.packages("ggsurvfit")
+#install.packages("forcats")
+#install.packages(c("MCMCpack", "matrixStats", "robustbase", "aod", "e1071"))
+#devtools::install_github("holab-hku/DCATS")
+
+```
+
+
+
+```{r old_code_not_used}
+#Read data in:
+
+# ```{r read_data}
+# library(readxl)
+# allglioma <- read_xlsx("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/data/Allglioma_intensity_measurements.xlsx")
+# allglioma_cd11c <- read_xlsx("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/data/Allglioma_CD11c_intensity.xlsx")
+# 
+# astro15b <- read_xlsx("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/data/Astro15B_intensity_measurements.xlsx")
+# 
+# astro16a <- read_xlsx("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/data/Astro16A_intensity_measurements.xlsx")
+# 
+# astro21b <- read_xlsx("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/data/Astro21B_Intensity_measurements.xlsx")
+# 
+# astro22b <- read_xlsx("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/data/Astro22B_intensity_measurements.xlsx")
+# astro22b_cd45 <- read_xlsx("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/data/Astro22b_CD45_measurements.xlsx")
+# astro22b$`CD45 mean` <- astro22b_cd45$`Cell: CD45 mean`
+# 
+# astro23b <- read_xlsx("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/data/Astro23B_intensity_measurements.xlsx")
+# 
+# astro24b <- read_xlsx("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/data/Atsro24B_intensity_measurements.xlsx")
+# 
+# ```
+# 
+# Fix the missing values of cd11c
+# ```{r fix_cd11c}
+# 
+# colnames(allglioma_cd11c) <- c("Image", "Name", "Class", "Parent", "Cell: CD11c mean1", "Cell: CD11c std dev1", "Cell: CD11C mean2", "Cell: CD11C std dev2")
+# cd11c_temp <- allglioma_cd11c[!is.na(allglioma_cd11c$`Cell: CD11c mean1`), "Cell: CD11c mean1"]
+# cd11c_temp2 <- allglioma_cd11c[5997:length(allglioma_cd11c$`Cell: CD11C mean2`), "Cell: CD11C mean2"]
+# 
+# cd11c <- c(cd11c_temp$`Cell: CD11c mean1`, cd11c_temp2$`Cell: CD11C mean2`)
+# allglioma$`Cell: CD11c mean` <- cd11c
+# 
+# ```
+# 
+# Filter out the std and other unnecessary columns:
+# 
+# ```{r filter_dataframe, echo=FALSE}
+# library(dplyr)
+# allglioma_filttered <- allglioma[,seq(2, length(colnames(allglioma)), 2)]
+# allglioma_filttered$origin <- paste("allglioma", allglioma$Image, sep = "_")
+# colnames(allglioma_filttered) <- gsub("Cell: ", "", colnames(allglioma_filttered))
+# colnames(allglioma_filttered) <- gsub(" mean", "", colnames(allglioma_filttered))
+# 
+# 
+# astro15b_filttered <- astro15b[,seq(2, length(colnames(astro15b)), 2)]
+# astro15b_filttered$origin <- paste("15b", astro15b$Image, sep = "_")
+# colnames(astro15b_filttered) <- gsub("Cell: ", "", colnames(astro15b_filttered))
+# colnames(astro15b_filttered) <- gsub(" mean", "", colnames(astro15b_filttered))
+# 
+# temp <- which(grepl( "mean" , names( astro22b ))==T)
+# astro22b_filttered <- as.data.frame(astro22b[,temp])
+# astro22b_filttered$origin <- paste("22b", astro22b$Image, sep = "_")
+# colnames(astro22b_filttered) <- gsub("Cell: ", "", colnames(astro22b_filttered))
+# colnames(astro22b_filttered) <- gsub(" mean", "", colnames(astro22b_filttered))
+# 
+# temp <- which(grepl( "mean" , names( astro16a ))==T)
+# astro16a_filttered <- as.data.frame(astro16a[,temp])
+# astro16a_filttered$origin <- paste("16a", astro16a$Image, sep = "_")
+# colnames(astro16a_filttered) <- gsub("Cell: ", "", colnames(astro16a_filttered))
+# colnames(astro16a_filttered) <- gsub(" mean", "", colnames(astro16a_filttered))
+# 
+# temp <- which(grepl( "mean" , names( astro21b ))==T)
+# astro21b_filttered <- as.data.frame(astro21b[,temp])
+# astro21b_filttered$origin <- paste("21b", astro21b$Image, sep = "_")
+# colnames(astro21b_filttered) <- gsub("Cell: ", "", colnames(astro21b_filttered))
+# colnames(astro21b_filttered) <- gsub(" mean", "", colnames(astro21b_filttered))
+# 
+# temp <- which(grepl( "mean" , names( astro23b ))==T)
+# astro23b_filttered <- as.data.frame(astro23b[,temp])
+# astro23b_filttered$origin <- paste("23b", astro23b$Image, sep = "_")
+# colnames(astro23b_filttered) <- gsub("Cell: ", "", colnames(astro23b_filttered))
+# colnames(astro23b_filttered) <- gsub(" mean", "", colnames(astro23b_filttered))
+# 
+# temp <- which(grepl( "mean" , names( astro24b ))==T)
+# astro24b_filttered <- as.data.frame(astro24b[,temp])
+# astro24b_filttered$origin <- paste("24b", astro24b$Image, sep = "_")
+# colnames(astro24b_filttered) <- gsub("Cell: ", "", colnames(astro24b_filttered))
+# colnames(astro24b_filttered) <- gsub(" mean", "", colnames(astro24b_filttered))
+# 
+# ```
+# 
+# Do dimensionality reduction and attach result into filttered dataframe:
+# 
+# ```{r umap_astro15b}
+# library(uwot)
+# astro15b_filttered_umap <- umap(astro15b_filttered[,-9], n_neighbors = 60, metric = "euclidean", min_dist = 0.25)
+# #save.image("/lustre/compbio/projects/Friebel_masscyto_project/umap_myel_glioma_noCD45neg_05012022.RData")
+# astro15b_filttered <- cbind.data.frame(astro15b_filttered, astro15b_filttered_umap); colnames(astro15b_filttered)[(ncol(astro15b_filttered)-1):ncol(astro15b_filttered)] <- c("UMAP1", "UMAP2")
+# 
+# ggplot(astro15b_filttered, aes(x = UMAP1, y = UMAP2)) + geom_point(aes(color = origin), alpha = 0.6, size = 0.5) + guides(colour = guide_legend(override.aes = list(alpha = 1, size = 2), ncol = 2, title = "Cluster")) + theme_bw() + ggtitle("Astro15b TMA origin")
+# 
+# ggplot(astro15b_filttered, aes(x = UMAP1, y = UMAP2)) + geom_point(aes_string(color = "CA9"), size = 0.5) + theme_bw() #+ ggtitle(titles[[i]])
+# 
+# ```
+# 
+# ```{r umap_astro22b}
+# library(uwot)
+# astro22b_filttered_umap <- umap(astro22b_filttered[,-9], n_neighbors = 60, metric = "euclidean", min_dist = 0.25)
+# #save.image("/lustre/compbio/projects/Friebel_masscyto_project/umap_myel_glioma_noCD45neg_05012022.RData")
+# astro22b_filttered <- cbind.data.frame(astro22b_filttered, astro22b_filttered_umap); colnames(astro22b_filttered)[(ncol(astro22b_filttered)-1):ncol(astro22b_filttered)] <- c("UMAP1", "UMAP2")
+# 
+# ggplot(astro22b_filttered, aes(x = UMAP1, y = UMAP2)) + geom_point(aes(color = origin), alpha = 0.6, size = 0.5) + guides(colour = guide_legend(override.aes = list(alpha = 1, size = 2), ncol = 2, title = "Origin")) + theme_bw() + ggtitle("Astro22b TMA origin")
+# 
+# ggplot(astro22b_filttered, aes(x = UMAP1, y = UMAP2)) + geom_point(aes(color = `Cell: CD11B mean`), alpha = 0.6, size = 0.5) + guides(colour = guide_legend(override.aes = list(alpha = 1, size = 2), ncol = 2, title = "Origin")) + theme_bw() + ggtitle("Astro22b TMA origin")
+# 
+# ```
+# 
+# ```{r histograms}
+# library(ggplot2)
+# # Threshholds: CD163: 5; TMEM119: 6.5; CD68: 12; CD11c: 4.5; CD45: 4.5; CD11b: 7
+# 
+# thresholds <- list()
+# thresholds["CD163"] <- 5
+# thresholds["TMEM119"] <- 6.5
+# thresholds["CD68"] <- 12
+# thresholds["CD11C"] <- 4.5
+# thresholds["CD45"] <- 4.5
+# thresholds["CD11B"] <- 7
+# thresholds["DAPI"] <- 0
+# thresholds["CA9"] <- 0
+# 
+# df <- as.data.frame(allglioma_filttered[,1:length(allglioma_filttered)-1])
+# df <- df[,-1]
+# colnames(df) <- toupper(colnames(df))
+# 
+# for (i in colnames(df)) {
+#   fn <- paste("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/figures/allglioma/", i, ".png", sep="")
+#   gg <- ggplot(df, aes(x=df[,i])) + geom_histogram(color="black", fill="light gray", aes(y=..density..)) + ggtitle(paste(i, " histogram")) + geom_density(alpha=0.2, fill="blue", adjust = 3) + xlab("Intensity") + geom_vline(aes(xintercept=thresholds[[i]]), color="red", linetype="dashed", size=1) + xlim(-1,25)
+#   show(gg)
+#   ggsave(filename = fn, gg)
+# }
+# 
+# fn <- paste("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/figures/allglioma/", "DAPI", ".png", sep="")
+# gg <- ggplot(df, aes(x=df[,"DAPI"])) + geom_histogram(color="black", fill="light gray", aes(y=..density..)) + ggtitle(paste("DAPI", " histogram")) + geom_density(alpha=0.2, fill="blue", adjust = 3) + xlab("Intensity") + geom_vline(aes(xintercept=thresholds[["DAPI"]]), color="red", linetype="dashed", size=1) 
+# show(gg)
+# ggsave(filename = fn, gg)
+# 
+# 
+# ```
+# 
+# 
+# ```{r histograms_with_median_and_mean}
+# library(ggplot2)
+# getmode <- function(v) {
+#    uniqv <- unique(v)
+#    uniqv[which.max(tabulate(match(v, uniqv)))]
+# }
+# 
+# df <- as.data.frame(astro15b_filttered[,1:length(astro15b_filttered)-1])
+# df <- df[,-1]
+# colnames(df) <- toupper(colnames(df))
+# 
+# 
+# for (i in colnames(df)) {
+#   
+#   median_line <- median(df[,i])
+#   mean_line <- mean(df[,i])
+#   std_left <- mean(df[,i]) - sd(df[,i])
+#   std_right <- mean(df[,i]) + sd(df[,i])
+#   mode_line <- getmode(df[,i])
+#   
+#   fn <- paste("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/figures/mean_median_histograms/astro15b/", i, ".png", sep="")
+#   gg <- ggplot(df, aes(x=df[,i])) + geom_histogram(color="black", fill="light gray", aes(y=..density..)) + ggtitle(paste(i, " histogram")) + geom_density(alpha=0.2, fill="blue", adjust = 3) + xlab("Intensity") + xlim(-1,25) + geom_vline(xintercept = median_line, colour="red", linetype = "longdash") + geom_vline(xintercept = mean_line, colour="blue", linetype = "longdash") + geom_vline(xintercept = std_left, colour="dark grey", linetype = "dashed") + geom_vline(xintercept = std_right, colour="dark grey", linetype = "dashed") + geom_vline(xintercept = mode_line, colour="green", linetype = "dashed")
+#   show(gg)
+#   #ggsave(filename = fn, gg)
+# }
+# 
+# fn <- paste("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/figures/mean_median_histograms/astro15b/", "DAPI", ".png", sep="")
+# gg <- ggplot(df, aes(x=df[,"DAPI"])) + geom_histogram(color="black", fill="light gray", aes(y=..density..)) + ggtitle(paste("DAPI", " histogram")) + geom_density(alpha=0.2, fill="blue", adjust = 3) + xlab("Intensity") + geom_vline(xintercept = median_line, colour="red", linetype = "longdash") + geom_vline(xintercept = mean_line, colour="blue", linetype = "longdash") + geom_vline(xintercept = std_left, colour="grey", linetype = "dashed") + geom_vline(xintercept = std_right, colour="grey", linetype = "dashed")
+# show(gg)
+# #ggsave(filename = fn, gg)
+# 
+# 
+# ```
+# ```{r individual_celltypes_pval, fig.width=8, fig.height=4}
+# #start with data from calc_celltype_fractions_NO_OTHER
+# 
+# #This is meant to calculate statistical significances between celltypess across 
+# #variable condiotions
+# 
+# test <- shared_data
+# test$grade_for_plot <- c(NA)
+# test[which(test$Grade == 1),"grade_for_plot"] <- "Grade 1"
+# test[which(test$Grade == 2 | test$Grade == 3),"grade_for_plot"] <- "Grade 2-3"
+# test[which(test$Grade == 4),"grade_for_plot"] <- "Grade 4"
+# # 
+# for (ct in unique(test$variable)) {
+#   temp_ct <- subset(test, grade_for_plot != "Grade 1")
+#   temp_ct <- subset(temp_ct, variable == ct)
+#   temp_ct <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` != "NA")
+#   
+#   print("Across hypoxia classes")
+#   
+#   sub <- subset(temp_ct, Name != "Non hypoxic")
+#   print(ct)
+  # print("High VS low")
+  # print(wilcox.test(fraction_in_hypoxia_class ~ Name, data=sub) )
+  # 
+  # sub <- subset(temp_ct, Name != "Low hypoxia")
+  # print("Normoxia VS high")
+  # print(wilcox.test(fraction_in_hypoxia_class ~ Name, data=sub) )
+  # 
+  # sub <- subset(temp_ct, Name != "High hypoxia")
+  # print("Normoxia VS low")
+  # print(wilcox.test(fraction_in_hypoxia_class ~ Name, data=sub) )
+  # 
+  # print("IDH-statwise")
+  # temp_ct$`IDH 0=WT, 1=MUT, NA` <- as.factor(temp_ct$`IDH 0=WT, 1=MUT, NA`)
+  
+  # sub <- subset(temp_ct, Name == "High hypoxia")
+  # sub <- subset(sub, is.nan(fraction_in_hypoxia_class)==F)
+  # if (length(unique(sub$`IDH 0=WT, 1=MUT, NA`)) != 1) {
+  #   print("IDH-wt VS IDH-mut in High hypoxia")
+  #   print(wilcox.test(fraction_in_hypoxia_class ~ `IDH 0=WT, 1=MUT, NA`, data=sub) )
+  # }
+  # 
+  # sub <- subset(temp_ct, Name == "Low hypoxia")
+  # sub <- subset(sub, is.nan(fraction_in_hypoxia_class)==F)
+  # if (length(unique(sub$`IDH 0=WT, 1=MUT, NA`)) != 1) {
+  #   print("IDH-wt VS IDH-mut in Low hypoxia")
+  #   print(wilcox.test(fraction_in_hypoxia_class ~ `IDH 0=WT, 1=MUT, NA`, data=sub) )
+  # }
+  # 
+  # sub <- subset(temp_ct, Name == "Non hypoxic")
+  # sub <- subset(sub, is.nan(fraction_in_hypoxia_class)==F)
+  # if (length(unique(sub$`IDH 0=WT, 1=MUT, NA`)) != 1) {
+  #   print("IDH-wt VS IDH-mut in Normoxia")
+  #   print(wilcox.test(fraction_in_hypoxia_class ~ `IDH 0=WT, 1=MUT, NA`, data=sub) )
+  # }
+#   
+#   
+#   sub <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "0")
+#   sub <- subset(sub, is.nan(fraction_in_hypoxia_class)==F)
+#   sub <- subset(sub, Name != "Low hypoxia")
+#   if (length(unique(sub$Name)) != 1) {
+#   print("High-normoxia Hypoxia classes in IDH-wt")
+#   print(wilcox.test(fraction_in_hypoxia_class ~ Name, data=sub) )
+#   }
+#   
+#   sub <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "0")
+#   sub <- subset(sub, is.nan(fraction_in_hypoxia_class)==F)
+#   sub <- subset(sub, Name != "High hypoxia")
+#   if (length(unique(sub$Name)) != 1) {
+#   print("Low-normoxia Hypoxia classes in IDH-wt")
+#   print(wilcox.test(fraction_in_hypoxia_class ~ Name, data=sub) )
+#   }
+#   
+#   sub <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "0")
+#   sub <- subset(sub, is.nan(fraction_in_hypoxia_class)==F)
+#   sub <- subset(sub, Name != "Non hypoxic")
+#   if (length(unique(sub$Name)) != 1) {
+#   print("High-low Hypoxia classes in IDH-wt")
+#   print(wilcox.test(fraction_in_hypoxia_class ~ Name, data=sub) )
+#   }
+# 
+#   
+#   sub <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "1")
+#   sub <- subset(sub, is.nan(fraction_in_hypoxia_class)==F)
+#   sub <- subset(sub, Name != "Low hypoxia")
+#   if (length(unique(sub$Name)) != 1) {
+#   print("High-normoxia Hypoxia classes in IDH-mut")
+#   print(wilcox.test(fraction_in_hypoxia_class ~ Name, data=sub) )
+#   }
+#   
+#   sub <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "1")
+#   sub <- subset(sub, is.nan(fraction_in_hypoxia_class)==F)
+#   sub <- subset(sub, Name != "High hypoxia")
+#   if (length(unique(sub$Name)) != 1) {
+#   print("Low-normoxia Hypoxia classes in IDH-mut")
+#   print(wilcox.test(fraction_in_hypoxia_class ~ Name, data=sub) )
+#   }
+#   
+#   sub <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "1")
+#   sub <- subset(sub, is.nan(fraction_in_hypoxia_class)==F)
+#   sub <- subset(sub, Name != "Non hypoxic")
+#   if (length(unique(sub$Name)) != 1) {
+#   print("High-low Hypoxia classes in IDH-mut")
+#   print(wilcox.test(fraction_in_hypoxia_class ~ Name, data=sub) )
+#   }
+#   
+# }
+
+
+```
+
+
+```{r hypoksia_preprocessing}
+library(readxl)
+library(dplyr)
+
+#load data
+
+#df <- as.data.frame(read_xlsx("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/data/QuPath_results_Whole_data_set_new.xlsx"))
+#df <- read_xlsx("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/data/QuPath_fixed_cell_classifier_results_Whole data set_new.xlsx")
+df <- read_xlsx("C:/Users/is427866/Downloads/QuPath fixed cell classifier results_Whole data set_new.xlsx")
+
+# Load metadata (age, sex, survival time), create relapse classes
+meta_df <- read_xlsx("C:/Users/is427866/Documents/hypoxia/hypoxia_sample_metadata.xlsx")
+meta_df$relapse <- c("relapse")
+meta_df[which(meta_df$`Prim vs relapse, 1=PRIM, >1=relapse` == "1"), "relapse"] <- c("primary")
+
+path_anno_df <- subset(df, Name == "PathAnnotationObject")
+
+# change missing cell count values to 0
+
+subset_df <- as.data.frame(df[,12:26])
+subset_df <- subset_df %>% replace(is.na(.), 0)
+df[,12:26] <- subset_df
+
+df <- df[complete.cases(df), ]
+df$Core.identifier <- paste(df$`TMA`, df$`Code on TMA`, sep = " ")
+
+# subset based on hypoksia status
+
+samples_with_high_hypoksia <- which(df$Name == "High hypoxia")
+samples_with_high_hypoksia <- df[samples_with_high_hypoksia, "Core.identifier"]
+temp <- which(df$`Core.identifier` %in% samples_with_high_hypoksia$`Core.identifier`)
+df_high_hypoksia_only <- as.data.frame(df[temp,])
+df_high_hypoksia_only <- df_high_hypoksia_only[order(df_high_hypoksia_only$`Core.identifier`),]
+
+# Vähennä low hypoksiasta high hypoksia arvot
+
+temp <- which(df_high_hypoksia_only$Name == "High hypoxia")
+high_h <- as.numeric(df_high_hypoksia_only[temp, "Area px^2"])
+
+temp <- which(df_high_hypoksia_only$Name == "Low hypoxia")
+low_h <- as.numeric(df_high_hypoksia_only[temp, "Area px^2"])
+
+low_h <- low_h - high_h
+
+df_high_hypoksia_only[temp, "Area px^2"] <- low_h
+
+# combine corrected high hypoxia with those that have no high hypoksia
+df <- as.data.frame(df)
+
+df_low_hypoksia_only <- subset(df, !(`Core.identifier` %in% samples_with_high_hypoksia$Core.identifier))
+
+new_df <- rbind(df_low_hypoksia_only, df_high_hypoksia_only) 
+
+# remove samples with no hypoksia
+
+test <- which(as.data.frame(table(new_df$Core.identifier))$Freq <3)
+temp <- as.data.frame(table(new_df$Core.identifier))
+
+final_df <- subset(new_df, !(`Core.identifier` %in% temp[test,"Var1"]))
+final_df$`Area px^2` <- as.numeric(final_df$`Area px^2`)
+
+final_df_removed <- subset(new_df, `Core.identifier` %in% temp[test,"Var1"])
+
+```
+
+
+```{r VIZ_violin_with_jitter}
+library(ggplot2)
+library(RColorBrewer)
+
+plot_df <- subset(final_df, Name != "PathAnnotationObject")
+
+# Hypoxia area size
+p <- ggplot(plot_df, aes(x=Name, y=as.numeric(`Area px^2`))) + geom_violin() + stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0)) + labs(title="Area Size in Samples",x="Hypoxia Class", y = "Area px^2")
+p
+
+# cells in area
+p <- ggplot(plot_df, aes(x=Name, y=as.numeric(`Num Detections`))) + geom_violin() + stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0)) + labs(title="Cell count in area",x="Hypoxia Class", y = "Count")
+p
+
+```
+
+
+```{r filter_out_samples_with_low_counts_and_no_hypoxia}
+
+temp <- which(final_df$Name == "Low hypoxia" & final_df$`Num Detections`==0)
+dropout <- final_df[temp,"Core.identifier"]
+
+final_df_filttered <- subset(final_df, !(Core.identifier %in% dropout))
+
+# temp <- which(final_df_filttered$`Num Detections` < 20)
+# modified_for_ct <- final_df_filttered
+# modified_for_ct[temp, 13:22] <- 0
+
+# Take out those which have less than 20 cells in an hypoxia-area
+modified_for_ct <- subset(final_df_filttered, final_df_filttered$`Num Detections` > 19)
+
+# Remove those with missing IDH-status
+modified_for_ct <- subset(modified_for_ct, `IDH 0=WT, 1=MUT, NA` != "NA")
+
+## Change M1 and M2 to CD163- and CD163+
+
+colnames(modified_for_ct) <- c("TMA", "Code on TMA", "Tumor type", "Grade", "PAD", "Image name", 
+               "Sample code", "IDH 0=WT, 1=MUT, NA", "Prim vs relapse, 1=PRIM, >1=relapse", 
+               "Source.Name", "Image", "Name", "Num Detections", "Num CD163- macrophage", 
+               "Num CD163- microglia", "Num CD163+ macrophage", "Num Monocyte", "Num Other cell", 
+               "Num Other immune cell", "Num Granulocyte", "Num CD163+ microglia", 
+               "Num cDC1", "Centroid X px", "Centroid Y px", "Area px^2", 
+               "Perimeter px", "Core.identifier")
+
+temp_col <- c("dodgerblue2", "#E31A1C", "green4", "dark gray", "#FF7F00",  "#6A3D9A", "gold1", "skyblue2", "#FB9A99",  "palegreen2", "#CAB2D6",  "#FDBF6F",  "orange2", "khaki2", "maroon", "orchid1", "deeppink1", "blue1", "steelblue4", "darkturquoise", "green1", "yellow4", "yellow3", "darkorange4", "brown", "dodgerblue2", "#E31A1C", "green4")
+
+```
+
+
+```{r calc_celltype_fractions_NO_OTHER}
+library(data.table)
+library(reshape2)
+# remove CD45- cells (aka other and cancer cells)
+plot_df <- subset(modified_for_ct, Name != "PathAnnotationObject")
+plot_df <- plot_df[,-18] # make sure other cells are column 18!
+
+#plot_df <- plot_df[,c(4,28,8,9,12,16:24,27)] # Modify these if other cells!
+#ownames(plot_df) <- make.names(plot_df$Core.identifier, unique = TRUE)
+test <- melt(plot_df, measure.vars = c(14:21))
+test$variable <- gsub("Num ", "", test$variable)
+
+test$fraction_in_sample <- 0
+test$fraction_in_hypoxia_class <- 0
+test$fraction_in_hypoxia_class_total <- 0
+
+for (i in 0:length(test$Core.identifier)) {
+  n <- test[i,18]
+  temp <- which(test[,18] == n)
+  temp_sum <- sum(test[temp,20])
+  test[i,21] <- (test[i,20]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+  
+  n <- test[i,12]
+  m <- test[i,18]
+  temp <- which(test[,12] == n & test[,18] == m)
+  temp_sum <- sum(test[temp,20])
+  test[i,22] <- (test[i,20]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+  
+  n <- test[i,12]
+  temp <- which(test[,12] == n)
+  temp_sum <- sum(test[temp,20])
+  test[i,23] <- (test[i,20]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+
+}
+
+shared_data <- test
+
+shared_data <- shared_data %>% replace(is.na(.), 0)
+shared_data[,c(14,15)] <- NULL
+
+#write.csv(shared_data, file = "C:/Users/is427866/Downloads/hypoxia_cell_fractions_pathAnnotation_object.csv")
+
+```
+
+```{r calc_celltype_fractions_WITH_OTHER}
+library(data.table)
+library(reshape2)
+
+plot_df <- subset(modified_for_ct, Name != "PathAnnotationObject")
+#plot_df <- plot_df[,-18] # comment this out if you want other cells to be included, make sure other cells are column 18!
+
+#plot_df <- plot_df[,c(4,28,8,9,12,16:24,27)] # Modify these if other cells!
+rownames(plot_df) <- make.names(plot_df$Core.identifier, unique = TRUE)
+test <- melt(plot_df, measure.vars = c(14:22))
+test$variable <- gsub("Num ", "", test$variable)
+
+test$fraction_in_sample <- 0
+test$fraction_in_hypoxia_class <- 0
+test$fraction_in_hypoxia_class_total <- 0
+
+for (i in 0:length(test$Core.identifier)) {
+  n <- test[i,18]
+  temp <- which(test[,18] == n)
+  temp_sum <- sum(test[temp,20])
+  test[i,21] <- (test[i,20]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+  
+  n <- test[i,12]
+  m <- test[i,18]
+  temp <- which(test[,12] == n & test[,18] == m)
+  temp_sum <- sum(test[temp,20])
+  test[i,22] <- (test[i,20]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+  
+  n <- test[i,12]
+  temp <- which(test[,12] == n)
+  temp_sum <- sum(test[temp,20])
+  test[i,23] <- (test[i,20]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+
+}
+
+shared_data <- test
+
+shared_data <- shared_data %>% replace(is.na(.), 0)
+shared_data[,c(14,15)] <- NULL
+
+#write.csv(shared_data, file = "C:/Users/is427866/Downloads/hypoxia_cell_fractions_Anni.csv")
+
+```
+
+```{r VIZ_count_of_immune_cells_in_samples}
+library(ggplot2)
+# This script is meant for getting the counts of CD45+ cells separate from
+# all detections. 
+
+# Continue with "shared_data" result from "calc_celltype_fractions_WITH_OTHER"
+
+shared_data_other_cells <- subset(shared_data, variable == "Other cell")
+
+shared_data_other_cells$immune_cell_count <- shared_data_other_cells$`Num Detections` - shared_data_other_cells$value
+
+ggplot(shared_data_other_cells, aes(x=variable, y=immune_cell_count)) + geom_violin() + geom_jitter(position = position_jitter(0.2, 0)) + geom_hline(yintercept = 100, color = "red") +geom_hline(yintercept = 150, color = "blue") + labs(title="Counts of immune cells in samples",x="Immune cells", y = "Counts") #+ ylim(0,2000)
+
+ggplot(shared_data_other_cells, aes(x=variable, y=immune_cell_count, fill= `IDH 0=WT, 1=MUT, NA`)) + geom_violin() + geom_jitter(position = position_jitterdodge(jitter.width = 0.05, jitter.height = 0)) + geom_hline(yintercept = 100, color = "red") +geom_hline(yintercept = 150, color = "blue") + labs(title="Counts of immune cells in samples",x="Immune cells", y = "Counts") + ylim(0,2000)
+
+ggplot(shared_data_other_cells, aes(x=variable, y=immune_cell_count, fill= Grade)) + geom_violin() + geom_jitter(position = position_jitterdodge(jitter.width = 0.05, jitter.height = 0)) + geom_hline(yintercept = 100, color = "red") +geom_hline(yintercept = 150, color = "blue") + labs(title="Counts of immune cells in samples",x="Immune cells", y = "Counts") + ylim(0,2000)
+
+```
+
+```{r VIZ_celltypes_in_hypoxia_barplot, fig.height=8, fig.width=10}
+library(ggplot2)
+
+# in all samples
+ggplot(shared_data, aes(x=factor(Core.identifier), y=fraction_in_sample, fill=variable)) + geom_bar(stat="identity", position="stack") + scale_fill_discrete(name="Sample") + ggtitle("Cell type frequencies as percentages, percentage per hypoxia class") + xlab("Hypoxia class") + ylab("Percentage") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +scale_fill_manual(values=temp_col)
+
+plot_df <- aggregate(shared_data$value ~ shared_data$Name + shared_data$variable, shared_data, sum)
+colnames(plot_df) <- c("Name", "variable", "counts_withOther")
+plot_df$merg <- paste(plot_df$Name, plot_df$variable)
+plot_df2 <- plot_df
+
+savedf <- merge(plot_df, plot_df2, by="merg", all = T)
+aggregate(savedf$counts_withOther ~ savedf$Name.x, savedf, sum)
+
+write.csv(savedf, "C:/Users/is427866/Documents/hypoxia/cell_type_fractions_in_hypoxia2.csv")
+
+# in hypoxia classes
+ggplot(plot_df, aes(x=factor(Name), y=fraction_in_hypoxia_class_total, fill=variable)) + geom_bar(stat="identity", position="stack") + scale_fill_discrete(name="Sample") + ggtitle("Cell type frequencies as percentages, percentage per hypoxia class") + xlab("Hypoxia class") + ylab("Percentage") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +scale_fill_manual(values=temp_col) + geom_text(data=plot_df, aes(label=round(fraction_in_hypoxia_class_total,2)), position=position_stack(vjust=0.5))
+
+#ggsave(paste("C:/Users/is427866/Documents/hypoxia/", "barplot_celltypes_in_hypoxia", ".pdf", sep = ""))
+
+```
+
+
+```{r OLD_VIZ_celltype, fig.width=20, fig.height=5}
+# cell type fractions per sample, no hypoxia
+
+plot_df <- subset(modified_for_ct, Name != "PathAnnotationObject")
+plot_df <- plot_df[,-20] # comment this out if you want other cells to be included, make sure other cells are column 20!
+
+plot_df[which(plot_df$`Prim vs relapse, 1=PRIM, >1=relapse` != 1),"Prim vs relapse, 1=PRIM, >1=relapse"] <- "Relapse"
+plot_df[which(plot_df$`Prim vs relapse, 1=PRIM, >1=relapse` == 1),"Prim vs relapse, 1=PRIM, >1=relapse"] <- "Primary"
+
+plot_df$grade_for_plot <- c(NA)
+plot_df[which(plot_df$Grade == 1),"grade_for_plot"] <- "Grade 1"
+plot_df[which(plot_df$Grade == 2 | plot_df$Grade == 3),"grade_for_plot"] <- "Grade 2-3"
+plot_df[which(plot_df$Grade == 4),"grade_for_plot"] <- "Grade 4"
+
+
+plot_df <- plot_df[,c(4,28,8,9,12,16:24,27)] # Modify these if other cells!
+rownames(plot_df) <- make.names(plot_df$Core.identifier, unique = TRUE)
+test <- melt(plot_df)
+test$variable <- gsub("Num ", "", test$variable)
+
+test$fraction_in_sample <- 0
+test$fraction_in_hypoxia_class <- 0
+for (i in 0:length(test$Core.identifier)) {
+  n <- test[i,6]
+  temp <- which(test[,6] == n)
+  temp_sum <- sum(test[temp,8])
+  test[i,9] <- (test[i,8]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+  
+  n <- test[i,5]
+  m <- test[i,6]
+  temp <- which(test[,5] == n & test[,6] == m)
+  temp_sum <- sum(test[temp,8])
+  test[i,10] <- (test[i,8]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+
+}
+
+## Sort data based on grade
+test <- test[order(test$Grade),]
+
+p <- ggplot(test, aes(x=Name, y=fraction_in_hypoxia_class, fill= variable)) + geom_boxplot() + stat_summary(fun=median, geom="point", size=2, color="red") + labs(title="Cell type fractions in samples",x="Cell type", y = "Percentage") #+ geom_jitter(position = position_jitter(0.2, 0)) 
+p
+
+# THIS SHOULD BE PLOTTED WITH PATH ANNOTATION OBJ
+ggplot(test, aes(x=factor(Core.identifier, level=unique(test$Core.identifier)), y=fraction_in_sample, fill=variable)) + geom_bar(stat="identity", position="stack") + scale_fill_discrete(name="Sample") + ggtitle("Cell type frequencies as percentages, percentage per sample") + xlab("Cell type") + ylab("Percentage") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +scale_fill_manual(values=temp_col)
+
+# Make plots from each 
+
+## Reorder test
+
+ggplot(test, aes(x=factor(Core.identifier, level=unique(test$Core.identifier)), y=fraction_in_sample, fill=variable, group=Grade)) + geom_bar(stat="identity", position="stack") + scale_fill_discrete(name="Sample") + ggtitle("Cell type frequencies as percentages, percentage per sample") + xlab("Cell type") + ylab("Percentage") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +scale_fill_manual(values=temp_col)
+
+
+# by hypoxia class
+ggplot(test, aes(x=factor(Core.identifier, level=unique(test$Core.identifier)), y=fraction_in_sample, fill=variable, group=Grade)) + geom_bar(stat="identity", position="stack") + scale_fill_discrete(name="Sample") + ggtitle("Cell type frequencies as percentages, percentage per sample") + xlab("Cell type") + ylab("Percentage") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +scale_fill_manual(values=temp_col)
+
+```
+
+```{r VIZ_individual_celltypes_boxplots_IDH_status, fig.width=8, fig.height=4}
+library(ggplot2)
+
+test <- shared_data
+
+# Create grouping factor which considers grade and IDH-status
+test$grade_status_for_plot <- c(NA)
+test[which(test$Grade == 1 & test$`IDH 0=WT, 1=MUT, NA`== 0),"grade_status_for_plot"] <- "Grade 1, IDHwt"
+test[which((test$Grade == 2 | test$Grade == 3) & test$`IDH 0=WT, 1=MUT, NA`== 0),"grade_status_for_plot"] <- "Grade 2-3, IDHwt"
+test[which(test$Grade == 4 & test$`IDH 0=WT, 1=MUT, NA`== 0),"grade_status_for_plot"] <- "Grade 4, IDHwt"
+
+test[which(test$Grade == 1 & test$`IDH 0=WT, 1=MUT, NA`== 1),"grade_status_for_plot"] <- "Grade 1, IDHmut"
+test[which((test$Grade == 2 | test$Grade == 3) & test$`IDH 0=WT, 1=MUT, NA`== 1),"grade_status_for_plot"] <- "Grade 2-3, IDHmut"
+test[which(test$Grade == 4 & test$`IDH 0=WT, 1=MUT, NA`== 1),"grade_status_for_plot"] <- "Grade 4, IDHmut"
+
+# Create grouping factor which considers hypoxia class and IDH-status
+test$group_for_plot <- c(NA)
+test[which(test$Name == "Non hypoxic" & test$`IDH 0=WT, 1=MUT, NA`== 0),"group_for_plot"] <- "Normoxic, IDHwt"
+test[which(test$Name == "Low hypoxia" & test$`IDH 0=WT, 1=MUT, NA`== 0),"group_for_plot"] <- "Low hypoxia, IDHwt"
+test[which(test$Name == "High hypoxia" & test$`IDH 0=WT, 1=MUT, NA`== 0),"group_for_plot"] <- "High hypoxia, IDHwt"
+
+test[which(test$Name == "Non hypoxic" & test$`IDH 0=WT, 1=MUT, NA`== 1),"group_for_plot"] <- "Normoxic, IDHmut"
+test[which(test$Name == "Low hypoxia" & test$`IDH 0=WT, 1=MUT, NA`== 1),"group_for_plot"] <- "Low hypoxia, IDHmut"
+test[which(test$Name == "High hypoxia" & test$`IDH 0=WT, 1=MUT, NA`== 1),"group_for_plot"] <- "High hypoxia, IDHmut"
+
+################################
+# Plotting
+
+for (ct in unique(test$variable)) {
+  temp_ct <- subset(test, Grade != 1)
+  temp_ct <- subset(temp_ct, variable == ct)
+  temp_ct <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` != "NA")
+  
+  # All samples, split by hypoxia levels and IDH
+ p <- ggplot(temp_ct, aes(x=factor(Name, levels = c("Non hypoxic", "Low hypoxia", "High hypoxia")), y=fraction_in_hypoxia_class, fill=`IDH 0=WT, 1=MUT, NA`)) + geom_boxplot(outlier.shape = NA) + labs(title=paste("Cell type fractions in hypoxia class, ", ct, sep = " "),x="Grade", y = "Percentage") + geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0)) + guides(fill=guide_legend(title="Group"))
+  #show(p)
+  #ggsave(paste("C:/Users/is427866/Documents/hypoxia/boxplots/boxplots_celltypes30.1/hypoxia_idh_status/all_samples/", ct, ".png", sep = ""))
+  
+  
+    # All samples, split by hypoxia levels and IDH GROUPED
+ p <- ggplot(temp_ct, aes(x=factor(group_for_plot, levels = c("Normoxic, IDHmut", "Low hypoxia, IDHmut", "High hypoxia, IDHmut", "Normoxic, IDHwt", "Low hypoxia, IDHwt", "High hypoxia, IDHwt")), y=fraction_in_hypoxia_class)) + geom_boxplot(outlier.shape = NA) + labs(title=paste("Cell type fractions in hypoxia class, ", ct, sep = " "),x="Grade", y = "Percentage") +guides(fill=guide_legend(title="Group")) + geom_jitter(position = position_jitter(0.2, 0)) 
+  show(p)
+  ggsave(paste("C:/Users/is427866/Documents/hypoxia/boxplots/boxplots_celltypes_across_hypoxia_IDH/", ct, ".png", sep = ""))
+  
+  sub <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "0")
+  
+  p <- ggplot(sub, aes(x=factor(Name, levels = c("Non hypoxic", "Low hypoxia", "High hypoxia")), y=fraction_in_hypoxia_class, fill=grade_for_plot)) + geom_boxplot(outlier.shape = NA) + labs(title=paste("Cell type fractions in hypoxia class, IDH-WT, ", ct, sep = " "),x="Grade", y = "Percentage") + geom_jitter(position = position_jitterdodge(jitter.width = 0.05, jitter.height = 0)) #+ scale_colour_manual(values=c("orchid1", "skyblue")) + ylim(0,85) #+ stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0)) 
+   
+  #show(p)
+  #ggsave(paste("C:/Users/is427866/Documents/hypoxia/boxplots/boxplots_celltypes30.1/hypoxia_idh_status/idh_wt/", ct, ".png", sep = ""))
+  
+  sub <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "1")
+  
+  p <- ggplot(sub, aes(x=factor(Name, levels = c("Non hypoxic", "Low hypoxia")), y=fraction_in_hypoxia_class, fill=grade_for_plot)) + geom_boxplot(outlier.shape = NA) + labs(title=paste("Cell type fractions in hypoxia class, IDH-MUT, ", ct, sep = " "),x="Grade", y = "Percentage") + geom_jitter(position = position_jitterdodge(jitter.width = 0.05, jitter.height = 0)) #+ scale_colour_manual(values=c("orchid1", "skyblue")) #+ stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0))
+   
+  #show(p)
+  #ggsave(paste("C:/Users/is427866/Documents/hypoxia/boxplots/boxplots_celltypes30.1/hypoxia_idh_status/idh_mut/", ct, ".png", sep = ""))
+  
+  ##p <- ggplot(temp_ct, aes(x=Name, y=fraction_in_sample, fill=grade_for_plot, colour= `IDH 0=WT, 1=MUT, NA`)) + geom_boxplot(outlier.shape = NA) + labs(title=paste("Cell type fractions in samples", ct, sep = " "),x="Grade", y = "Percentage") + geom_jitter(position = position_jitterdodge(jitter.width = 0.05, jitter.height = 0)) + scale_colour_manual(values=c("orchid1", "skyblue")) #+ stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0)) 
+  
+  #show(p)
+  
+  g <- gsub(" ", "_", ct)
+  #ggsave(filename = paste("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/figures/", g, ".pdf", sep=""), p, width = 8, height = 4)
+  
+ 
+}
+
+
+
+```
+
+```{r VIZ_individual_celltypes_boxplots_relapse, fig.width=8, fig.height=4}
+library(ggplot2)
+
+test <- shared_data
+
+# Create grouping factor which considers hypoxia class and relapse
+test$group_for_plot_relapse <- c(NA)
+test[which(test$Name == "Non hypoxic" & test$`Prim vs relapse, 1=PRIM, >1=relapse` == 1),"group_for_plot_relapse"] <- "Normoxic, Primary"
+test[which(test$Name == "Low hypoxia" & test$`Prim vs relapse, 1=PRIM, >1=relapse` == 1),"group_for_plot_relapse"] <- "Low hypoxia, Primary"
+test[which(test$Name == "High hypoxia" & test$`Prim vs relapse, 1=PRIM, >1=relapse` == 1),"group_for_plot_relapse"] <- "High hypoxia, Primary"
+
+test[which(test$Name == "Non hypoxic" & test$`Prim vs relapse, 1=PRIM, >1=relapse` != 1),"group_for_plot_relapse"] <- "Normoxic, Relapse"
+test[which(test$Name == "Low hypoxia" & test$`Prim vs relapse, 1=PRIM, >1=relapse` != 1),"group_for_plot_relapse"] <- "Low hypoxia, Relapse"
+test[which(test$Name == "High hypoxia" & test$`Prim vs relapse, 1=PRIM, >1=relapse` != 1),"group_for_plot_relapse"] <- "High hypoxia, Relapse"
+
+test$relapse_simple <- c("Primary")
+test[which(test$`Prim vs relapse, 1=PRIM, >1=relapse` != 1),"relapse_simple"] <- "Relapse"
+
+
+################################
+# Plotting
+
+for (ct in unique(test$variable)) {
+  temp_ct <- subset(test, Grade != 1)
+  #temp_ct <- test
+  temp_ct <- subset(temp_ct, variable == ct)
+  temp_ct <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` != "NA")
+  
+  
+  # All samples, split by hypoxia levels and IDH
+ p <- ggplot(temp_ct, aes(x=factor(Name, levels = c("Non hypoxic", "Low hypoxia", "High hypoxia")), y=fraction_in_hypoxia_class, fill=relapse_simple)) + geom_boxplot(outlier.shape = NA) + labs(title=paste("Cell type fractions in hypoxia class, ", ct, sep = " "),x="Grade", y = "Percentage") + geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0)) + guides(fill=guide_legend(title="Group"))
+  show(p)
+  ggsave(paste("C:/Users/is427866/Documents/hypoxia/boxplots/boxplots_celltypes_across_relapse/", ct, ".png", sep = ""))
+  
+  
+    # All samples, split by hypoxia levels and IDH GROUPED
+ p <- ggplot(temp_ct, aes(x=factor(group_for_plot_relapse, levels = c("Normoxic, Primary", "Low hypoxia, Primary", "High hypoxia, Primary", "Normoxic, Relapse", "Low hypoxia, Relapse", "High hypoxia, Relapse")), y=fraction_in_hypoxia_class)) + geom_boxplot(outlier.shape = NA) + labs(title=paste("Cell type fractions in hypoxia class, ", ct, sep = " "),x="Grade", y = "Percentage") +guides(fill=guide_legend(title="Group")) + geom_jitter(position = position_jitter(0.2, 0)) + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+  show(p)
+  #ggsave(paste("C:/Users/is427866/Documents/hypoxia/boxplots/boxplots_celltypes_across_hypoxia_IDH/", ct, ".png", sep = ""))
+  
+ 
+}
+
+
+```
+
+```{r VIZ_barplot_cells_hypoxia_relapse}
+# start with result from individual_celltypes_boxplots_relapse
+
+# calculate 
+
+
+# barplot, in hypoxia classes split by recurrency
+ggplot(test, aes(x=factor(group_for_plot_relapse, levels = c("Normoxic, Primary", "Low hypoxia, Primary", "High hypoxia, Primary", "Normoxic, Relapse", "Low hypoxia, Relapse", "High hypoxia, Relapse")), y=fraction_in_hypoxia_class_total, fill=variable)) + geom_bar(stat="identity", position="stack") + scale_fill_discrete(name="Sample") + ggtitle("Cell type frequencies as percentages, percentage per hypoxia class") + xlab("Hypoxia class") + ylab("Percentage") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +scale_fill_manual(values=temp_col) 
+
+```
+
+
+```{r VIZ_hypoxia_size_uncomplicated}
+
+plot_df <- final_df[,c(12,26,28)]
+plot_df <- subset(plot_df, Name != "PathAnnotationObject")
+
+plot_df$fraction <- 0
+for (i in 0:length(plot_df$Core.identifier)) {
+  n <- plot_df[i,3]
+  temp <- which(plot_df[,3] == n)
+  temp_sum <- sum(plot_df[temp,2])
+  plot_df[i,4] <- (plot_df[i,2]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+
+}
+
+p <- ggplot(plot_df, aes(x=Name, y=fraction)) + geom_violin() + stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0)) + labs(title="Area Size in Samples",x="Hypoxia Class", y = "Percentage")
+p
+
+```
+
+```{r VIZ_OLD_hypoxia_size}
+
+plot_df <- final_df[,c(12,26,28,4)]
+plot_df$grade_for_plot <- c(NA)
+plot_df[which(plot_df$Grade == 1),"grade_for_plot"] <- "Grade 1"
+plot_df[which(plot_df$Grade == 2 | plot_df$Grade == 3),"grade_for_plot"] <- "Grade 2-3"
+plot_df[which(plot_df$Grade == 4),"grade_for_plot"] <- "Grade 4"
+
+plot_df <- subset(plot_df, Name != "PathAnnotationObject")
+plot_df$`Area px^2` <- as.numeric(plot_df$`Area px^2`)
+
+plot_df$fraction <- 0
+plot_df$fraction_hypoxia <- 0
+
+for (i in 0:length(plot_df$Core.identifier)) {
+  n <- plot_df[i,3]
+  temp <- which(plot_df[,3] == n)
+  temp_sum <- sum(plot_df[temp,2])
+  plot_df[i,6] <- (plot_df[i,2]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+  
+  n <- plot_df[i,1]
+  temp <- which(plot_df[,1] == n)
+  temp_sum <- sum(plot_df[temp,2])
+  plot_df[i,7] <- (plot_df[i,2]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+
+}
+
+plot_df <- subset(plot_df, Grade != 1)
+
+for (g in unique(plot_df$Name)){
+  sub <- subset(plot_df, Name==g)
+  p <- ggplot(sub, aes(x=grade_for_plot, y=fraction)) + geom_violin() + stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0)) + labs(title=paste("Area Size in Samples, fraction from samples, ", g),x="Grade", y = "Percentage")
+  print(p)
+
+
+p <- ggplot(sub, aes(x=grade_for_plot, y=fraction_hypoxia)) + geom_violin() + stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0)) + labs(title=paste("Area Size in Samples, fraction from ", g),x="Grade", y = "Percentage")
+  print(p)
+}
+
+
+# sum(plot_df[which(plot_df$Name=="Non hypoxic"), "fraction_hypoxia"])
+# sum(plot_df[which(plot_df$Name=="Low hypoxia"), "fraction_hypoxia"])
+# sum(plot_df[which(plot_df$Name=="High hypoxia"), "fraction_hypoxia"])
+
+
+
+```
+
+```{r OLD_cell_count}
+
+plot_df <- final_df[,c(4,8,12,15,28)]
+plot_df <- subset(plot_df, Name != "PathAnnotationObject")
+
+plot_df$grade_for_plot <- c(NA)
+plot_df[which(plot_df$Grade == 1),"grade_for_plot"] <- "Grade 1"
+plot_df[which(plot_df$Grade == 2 | plot_df$Grade == 3),"grade_for_plot"] <- "Grade 2-3"
+plot_df[which(plot_df$Grade == 4),"grade_for_plot"] <- "Grade 4"
+
+plot_df$fraction <- 0
+for (i in 0:length(plot_df$Core.identifier)) {
+  n <- plot_df[i,5]
+  temp <- which(plot_df[,5] == n)
+  temp_sum <- sum(plot_df[temp,4])
+  plot_df[i,7] <- (plot_df[i,4]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+
+}
+
+for (i in unique(plot_df$`IDH 0=WT, 1=MUT, NA`)) {
+  sub <- subset(plot_df, `IDH 0=WT, 1=MUT, NA` == i)
+  g <- gsub(" ", "_", i)
+  #sub <- subset(sub, `IDH 0=WT, 1=MUT, NA` != "NA")
+  p <- ggplot(sub, aes(x=Name, y=fraction, fill=grade_for_plot)) + geom_violin() + geom_jitter(position = position_jitterdodge(jitter.width = 0.05, jitter.height = 0)) + labs(title=paste("Cell percentage per area,", i),x="Grade", y = "Percentage") + ylim(0,100) #+geom_jitter(position = position_jitter(0.2, 0))+ stat_summary(fun=median, geom="point", size=2, color="red")
+print(p)
+  
+#ggsave(paste("/lustre/compbio/projects/Multiplex_ihc_image_analysis/postprocessing/hypoxia_project/figures/box_", g, ".pdf"), p, width = 8, height = 4)
+}
+# 
+# p <- ggplot(plot_df, aes(x=Name, y=fraction)) + geom_violin() + labs(title=paste("Cell percentage per area"),x="Grade", y = "Percentage") + ylim(0,100) +geom_jitter(position = position_jitter(0.2, 0))+ stat_summary(fun=median, geom="point", size=2, color="red")
+# print(p)
+
+
+```
+
+```{r OLD_cell_density}
+
+plot_df <- final_df[, c(12,15, 26, 28,4)]
+
+total_plot_df <- subset(plot_df, Name == "PathAnnotationObject")
+plot_df <- subset(plot_df, Name != "PathAnnotationObject")
+
+plot_df$grade_for_plot <- c(NA)
+plot_df[which(plot_df$Grade == 1),"grade_for_plot"] <- "Grade 1"
+plot_df[which(plot_df$Grade == 2 | plot_df$Grade == 3),"grade_for_plot"] <- "Grade 2-3"
+plot_df[which(plot_df$Grade == 4),"grade_for_plot"] <- "Grade 4"
+
+plot_df$fraction <- 0
+for (i in 0:length(plot_df$`Num Detections`)) {
+  n <- as.numeric(plot_df[i,2])
+  m <- as.numeric(plot_df[i,3])
+  plot_df[i,7] <- n/m
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+
+}
+
+plot_df <- subset(plot_df, Grade != 1)
+
+for (g in unique(plot_df$Name)){
+  sub <- subset(plot_df, Name==g)
+
+  p <- ggplot(sub, aes(x=grade_for_plot, y=fraction)) + geom_violin() + stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0)) + labs(title=paste("Cell density per area", g),x="Grade", y = "Cells / px")
+  print(p)
+}
+
+p <- ggplot(plot_df, aes(x=Name, y=fraction)) + geom_violin() + stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0)) + labs(title=paste("Cell density per area", g),x="Grade", y = "Cells / px")
+  print(p)
+
+```
+
+```{r OLD_metatable_for_anni}
+# This creates the metadata table for Anni
+df <- read_xlsx("C:/Users/is427866/Downloads/QuPath fixed cell classifier results_Whole data set_new.xlsx")
+
+path_anno_df <- subset(final_df, Name == "PathAnnotationObject")
+path_anno_df$TMA_code <- paste(path_anno_df$TMA, path_anno_df$`Code on TMA`)
+
+meta_df <- read_xlsx("C:/Users/is427866/Documents/hypoxia/hypoxia_cell_fractions_Anni.xlsx")
+meta_df$TMA_code <- paste(meta_df$TMA, meta_df$`Code on TMA`)
+
+meta_df <- subset(meta_df, is.na(meta_df$Ikä) == F)
+
+
+meta_final <- merge(path_anno_df[,c(1:10, 28)], meta_df[,c(4:7,11, 24)], by.x = "TMA_code", by.y = "TMA_code", all.x = T, all.y = T)
+
+#write.csv(meta_final, "C:/Users/is427866/Documents/hypoxia/hypoxia_sample_metadata.csv")
+
+```
+
+```{r VIZ_fractions_of_macrophages_between_samples_whole_core}
+library(dplyr)
+library(ggplot2)
+library(lemon)
+## Calculate fractions of m1 and m2 macrophages between samples IN WHOLE CORE
+
+#start with dataframe from chunk calc_celltype_fractions 
+
+plot_df <- subset(shared_data, variable %in% c("M1 macrophage", "M2 macrophage"))
+
+ggplot(plot_df, aes(variable,fraction_in_sample)) +
+  geom_boxplot(outlier.colour = NA) +
+  geom_line(aes(group=Core.identifier), position = position_dodge(0.2)) +
+  geom_point(aes(fill=`IDH 0=WT, 1=MUT, NA`,group=Core.identifier),size=2,shape=21, position = position_dodge(0.2)) #+ theme(legend.position = "none")
+
+quantile(subset(plot_df, variable == "M2 macrophage")$fraction_in_sample)
+
+plot_df1 <- subset(plot_df, (fraction_in_sample > 10.3269154))
+
+ggplot(plot_df1, aes(variable,fraction_in_sample)) +
+  geom_line(aes(group=Core.identifier), position = position_dodge(0.2)) +
+  geom_point(aes(fill=`IDH 0=WT, 1=MUT, NA`,group=Core.identifier),size=2,shape=21, position = position_dodge(0.2)) 
+
+# plot_df2 <- subset(plot_df, fraction_in_sample > 15.848644)
+# 
+# ggplot(plot_df2, aes(variable,fraction_in_sample)) +
+#   geom_line(aes(group=Core.identifier), position = position_dodge(0.2)) +
+#   geom_point(aes(fill=`IDH 0=WT, 1=MUT, NA`,group=Core.identifier),size=2,shape=21, position = position_dodge(0.2)) 
+
+
+```
+
+```{r VIZ_fractions_of_macrophages_between_samples_hypoxia_regions}
+library(dplyr)
+library(ggplot2)
+library(lemon)
+## Calculate fractions of m1 and m2 macrophages between samples
+
+#start with dataframe from chunk calc_celltype_fractions 
+
+plot_df <- subset(shared_data, variable %in% c("M1 macrophage", "M2 macrophage"))
+
+plot_df <- subset(plot_df, Name == "High hypoxia")
+
+ggplot(plot_df, aes(variable,fraction_in_hypoxia_class)) +
+  geom_boxplot(outlier.colour = NA) +
+  geom_line(aes(group=Core.identifier), position = position_dodge(0.2)) +
+  geom_point(aes(fill=`IDH 0=WT, 1=MUT, NA`,group=Core.identifier),size=2,shape=21, position = position_dodge(0.2))
+
+quantile(subset(plot_df, variable == "M2 macrophage")$fraction_in_hypoxia_class)
+
+plot_df1 <- subset(plot_df, fraction_in_hypoxia_class > 1.639344)
+
+ggplot(plot_df1, aes(variable,fraction_in_hypoxia_class)) +
+  geom_line(aes(group=Core.identifier), position = position_dodge(0.2)) +
+  geom_point(aes(fill=`IDH 0=WT, 1=MUT, NA`,group=Core.identifier),size=2,shape=21, position = position_dodge(0.2))
+
+# plot_df2 <- subset(plot_df, fraction_in_hypoxia_class > 0.6466513)
+# 
+# ggplot(plot_df2, aes(variable,fraction_in_hypoxia_class)) +
+#   geom_line(aes(group=Core.identifier), position = position_dodge(0.2)) +
+#   geom_point(aes(fill=`IDH 0=WT, 1=MUT, NA`,group=Core.identifier),size=2,shape=21, position = position_dodge(0.2)) 
+
+```
+
+
+```{r celltype_correlations_whole_core, fig.width=10, fig.height=10}
+library(stats)
+## Calculate correlations between all celltype fractions in samples
+
+#start with dataframe from chunk calc_celltype_fractions 
+# create correlation dataframe
+corr_df <- as.data.frame(matrix(nrow = length(unique(shared_data$Core.identifier)), ncol = length(unique(shared_data$variable))))
+
+rownames(corr_df) <- unique(shared_data$Core.identifier)
+colnames(corr_df) <- unique(shared_data$variable)
+
+for (i in 1:length(shared_data$TMA)) {
+  row <- shared_data[i, "Core.identifier"]
+  col <- shared_data[i, "variable"]
+  corr_df[row,col] <- shared_data[i, "fraction_in_sample"]
+}
+
+# calculate correlation for celltypes 
+res <- cor(corr_df, method = "pearson") 
+res <- round(res,2)
+
+# colors
+temp <- res
+temp[temp>0] <- "dark red"
+temp[temp<=0] <- "dark blue"
+
+
+library(gplots)
+
+my_palette <- colorRampPalette(c("blue", "white", "red"))(n = 299)
+heatmap_3 <- heatmap.2(res,
+  cellnote = res,  # same data set for cell labels
+  main = "Celltype correlation Pearson", # heat map title
+  notecol="black",      # change font color of cell labels to black
+  density.info="none",  # turns off density plot inside color legend
+  trace="none",         # turns off trace lines inside the heat map
+  margins =c(13,13),     # widens margins around plot
+  col=my_palette,       # use on color palette defined earlier
+  #breaks=col_breaks,    # enable color transition at specified limits
+  dendrogram="both",     # only draw a row dendrogram
+  Colv=T,               # T draws column dendrogram, set to F to turn off, causes warnings but works
+  keysize = 2,
+  Rowv = T)           # T draws row dendrogram, set to F to turn off, causes warnings but works
+
+show(heatmap_3)
+
+```
+
+```{r celltype_correlations_hypoxia_regions, fig.width=10, fig.height=10}
+library(stats)
+## Calculate correlations between all celltype fractions in hypoxia regions
+
+#start with dataframe from chunk calc_celltype_fractions 
+# create correlation dataframe
+plot_df <- subset(shared_data, Name == "Low hypoxia")
+plot_df <- subset(plot_df, `IDH 0=WT, 1=MUT, NA` == "1")
+
+corr_df <- as.data.frame(matrix(nrow = length(unique(plot_df$Core.identifier)), ncol = length(unique(plot_df$variable))))
+
+rownames(corr_df) <- unique(plot_df$Core.identifier)
+colnames(corr_df) <- unique(plot_df$variable)
+
+for (i in 1:length(plot_df$TMA)) {
+  row <- plot_df[i, "Core.identifier"]
+  col <- plot_df[i, "variable"]
+  corr_df[row,col] <- plot_df[i, "fraction_in_hypoxia_class"]
+}
+
+# calculate correlation for celltypes 
+res <- cor(corr_df, method = "spearman") 
+res <- round(res,2)
+
+# colors
+temp <- res
+temp[temp>0] <- "dark red"
+temp[temp<=0] <- "dark blue"
+
+
+library(gplots)
+
+my_palette <- colorRampPalette(c("blue", "white", "red"))(n = 299)
+heatmap_3 <- heatmap.2(res[1:7,1:7],
+  cellnote = res,  # same data set for cell labels
+  main = "Celltype correlation Spearman Low Hypoxia, IDH-mut", # heat map title
+  notecol="black",      # change font color of cell labels to black
+  density.info="none",  # turns off density plot inside color legend
+  trace="none",         # turns off trace lines inside the heat map
+  margins =c(13,13),     # widens margins around plot
+  col=my_palette,       # use on color palette defined earlier
+  #breaks=col_breaks,    # enable color transition at specified limits
+  dendrogram="both",     # only draw a row dendrogram
+  Colv=T,               # T draws column dendrogram, set to F to turn off, causes warnings but works
+  keysize = 2,
+  Rowv = T)           # T draws row dendrogram, set to F to turn off, causes warnings but works
+
+show(heatmap_3)
+
+```
+
+```{r correlations_between_samples_ct_sampleAndCT, fig.width=10, fig.height=10}
+library(stats)
+## Calculate correlations between all samples, celltypes and samples and celltypes
+
+#start with dataframe from chunk calc_celltype_fractions 
+
+#plot_df <- shared_data
+plot_df <- subset(shared_data, `IDH 0=WT, 1=MUT, NA` == "1")
+
+corr_df <- as.data.frame(matrix(nrow = length(unique(plot_df$Core.identifier)), ncol = length(unique(plot_df$variable))))
+
+rownames(corr_df) <- unique(plot_df$Core.identifier)
+colnames(corr_df) <- unique(plot_df$variable)
+
+for (i in 1:length(plot_df$TMA)) {
+  row <- plot_df[i, "Core.identifier"]
+  col <- plot_df[i, "variable"]
+  corr_df[row,col] <- plot_df[i, "fraction_in_hypoxia_class"]
+}
+
+# calculate correlation, note TRANSPOSING
+res <- cor(corr_df, method = "pearson") 
+res <- round(res,2)
+
+# colors
+temp <- res
+temp[temp>0] <- "dark red"
+temp[temp<=0] <- "dark blue"
+
+
+library(gplots)
+
+my_palette <- colorRampPalette(c("blue", "white", "red"))(n = 299)
+heatmap_3 <- heatmap.2(res,
+  cellnote = res,  # same data set for cell labels
+  main = "IDH-mut Celltype correlation Pearson", # heat map title
+  notecol="black",      # change font color of cell labels to black
+  density.info="none",  # turns off density plot inside color legend
+  trace="none",         # turns off trace lines inside the heat map
+  margins =c(15,15),     # widens margins around plot
+  col=my_palette,       # use on color palette defined earlier
+  #breaks=col_breaks,    # enable color transition at specified limits
+  dendrogram="both",     # only draw a row dendrogram
+  Colv=T,               # T draws column dendrogram, set to F to turn off, causes warnings but works
+  keysize = 2,
+  Rowv = T)           # T draws row dendrogram, set to F to turn off, causes warnings but works
+
+show(heatmap_3)
+
+```
+
+```{r sep_sample_group}
+library(ggplot2)
+# Investigate whether there us a separate sample group with high amount of M2
+# macrophages and microglia
+
+#start with dataframe from chunk calc_celltype_fractions 
+plot_df <- subset(shared_data, variable %in% c("M2 microglia", "M2 macrophage"))
+quantile(subset(plot_df, variable == "M2 macrophage")$fraction_in_sample)
+quantile(subset(plot_df, variable == "M2 microglia")$fraction_in_sample)
+
+# check which samples have high number of both celltypes
+# for without other cells
+# plot_df1 <- subset(plot_df, (fraction_in_sample > 10.5820106 & variable == "M2 microglia") == T)
+# plot_df2 <- subset(plot_df, (fraction_in_sample > 32.488479 & variable == "M2 macrophage") == T)
+
+# with other cells
+plot_df1 <- subset(plot_df, (fraction_in_sample > 3.8131836 & variable == "M2 microglia") == T)
+plot_df2 <- subset(plot_df, (fraction_in_sample > 10.2021174 & variable == "M2 macrophage") == T)
+
+plot_df_comb <- rbind(plot_df1, plot_df2)
+
+ggplot(plot_df_comb, aes(variable,fraction_in_sample)) +
+  geom_line(aes(group=Core.identifier), position = position_dodge(0.2)) +
+  geom_point(aes(fill=`IDH 0=WT, 1=MUT, NA`,group=Core.identifier),size=2,shape=21, position = position_dodge(0.2))
+
+## identify the samples
+
+temp <- which(duplicated(plot_df_comb$Core.identifier)==T)
+plot_df_comb[temp, "Core.identifier"]
+
+# make identifier
+# samples with higher percentages:
+# "Astro 15_E7" "Astro 16_C8" "Astro 21_F4" "Astro 21_C7" "Astro 22_A8" "Astro 23_E6"
+# "Astro 24_E2" "Astro 21_A7" "Astro 21_B3" "Astro 21_B7" "Astro 21_C6" "Astro 21_E7"
+# "Astro 22_B9" "Astro 24_E6"
+
+# for no other cells
+# separate_group <- c("Astro 15_E7", "Astro 16_C8", "Astro 21_F4", "Astro 21_C7", "Astro 22_A8", "Astro 23_E6", "Astro 24_E2", "Astro 21_A7", "Astro 21_B3", "Astro 21_B7", "Astro 21_C6", "Astro 21_E7", "Astro 22_B9", "Astro 24_E6")
+
+#for other cells
+separate_group <- c("Astro 15 E6", "Astro 15 E7", "Astro 16 C8", "Astro 16 B1", "Astro 21 F4", "Astro 21 F7", "Astro 21 C7", "Astro 22 A8", "Astro 24 F1", "Astro 24 F7", "Astro 24 E2", "Astro 24 D5", "Astro 24 C6", "Astro 24 A5", "Astro 15 C6", "Astro 16 B3", "Astro 16 D3", "Astro 16 D8", "Astro 16 F7", "Astro 21 B7", "Astro 21 C6", "Astro 21 E7", "Astro 22 B9", "Astro 24 E6", "Astro 24 E7")
+
+
+test <- shared_data
+shared_data$more_m2 <- c("no")
+
+for (i in 1:length(shared_data$Core.identifier)){
+  if (shared_data[i, "Core.identifier"] %in% separate_group) {
+    shared_data[i, "more_m2"] <- "yes"
+  }
+}
+
+```
+
+```{r correlation_between_sample_groups, fig.width=10, fig.height=10}
+# start with result from above chunk
+## Check for differences in celltype composition between samples with high 
+# CD163+ macrophage / microglia composition and others
+
+test1 <- subset(test, more_m2 == "yes")
+
+temp_col <- c("dodgerblue2", "#E31A1C", "green4", "dark gray", "#FF7F00",  "#6A3D9A", "gold1", "skyblue2", "#FB9A99",  "palegreen2", "#CAB2D6",  "#FDBF6F",  "orange2", "khaki2", "maroon", "orchid1", "deeppink1", "blue1", "steelblue4", "darkturquoise", "green1", "yellow4", "yellow3", "darkorange4", "brown", "dodgerblue2", "#E31A1C", "green4")
+
+ggplot(test1, aes(x=factor(Core.identifier, level=unique(test$Core.identifier)), y=fraction_in_sample, fill=variable)) + geom_bar(stat="identity", position="stack") + scale_fill_discrete(name="Sample") + ggtitle("Cell type frequencies as percentages, percentage per sample") + xlab("Cell type") + ylab("Percentage") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +scale_fill_manual(values=temp_col)
+
+test1 <- subset(test, more_m2 == "no")
+
+ggplot(test1, aes(x=factor(Core.identifier, level=unique(test$Core.identifier)), y=fraction_in_sample, fill=variable)) + geom_bar(stat="identity", position="stack") + scale_fill_discrete(name="Sample") + ggtitle("Cell type frequencies as percentages, percentage per sample") + xlab("Cell type") + ylab("Percentage") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +scale_fill_manual(values=temp_col)
+
+
+library(stats)
+## Calculate correlations between all celltype fractions in samples
+
+#start with dataframe from chunk calc_celltype_fractions 
+
+test1 <- subset(test, more_m2 == "yes")
+
+corr_df <- as.data.frame(matrix(nrow = length(unique(test1$Core.identifier)), ncol = length(unique(test1$variable))))
+
+rownames(corr_df) <- unique(test1$Core.identifier)
+colnames(corr_df) <- unique(test1$variable)
+
+for (i in 1:length(test1$TMA)) {
+  row <- test1[i, "Core.identifier"]
+  col <- test1[i, "variable"]
+  corr_df[row,col] <- test1[i, "fraction_in_sample"]
+}
+
+# calculate correlation for celltypes 
+res <- cor(corr_df, method = "pearson") 
+res <- round(res,2)
+
+# colors
+temp <- res
+temp[temp>0] <- "dark red"
+temp[temp<=0] <- "dark blue"
+
+
+library(gplots)
+
+my_palette <- colorRampPalette(c("blue", "white", "red"))(n = 299)
+heatmap_3 <- heatmap.2(res,
+  cellnote = res,  # same data set for cell labels
+  main = "Celltype correlation Pearson", # heat map title
+  notecol="black",      # change font color of cell labels to black
+  density.info="none",  # turns off density plot inside color legend
+  trace="none",         # turns off trace lines inside the heat map
+  margins =c(13,13),     # widens margins around plot
+  col=my_palette,       # use on color palette defined earlier
+  #breaks=col_breaks,    # enable color transition at specified limits
+  dendrogram="both",     # only draw a row dendrogram
+  Colv=T,               # T draws column dendrogram, set to F to turn off, causes warnings but works
+  keysize = 2,
+  Rowv = T)           # T draws row dendrogram, set to F to turn off, causes warnings but works
+
+show(heatmap_3)
+
+
+
+```
+
+```{r VIZ_of_celltypes_in_sample_groups, fig.width=35, fig.height=8}
+
+test1 <- subset(test, more_m2 == "yes")
+plot_df1 <- subset(test1, variable %in% c("M1 microglia", "M2 microglia"))
+
+ggplot(plot_df1, aes(variable,fraction_in_sample)) +
+  geom_line(aes(group=Core.identifier), position = position_dodge(0.2)) +
+  geom_point(aes(fill=`IDH 0=WT, 1=MUT, NA`,group=Core.identifier),size=2,shape=21, position = position_dodge(0.2))
+
+
+
+#### TEST VIZ
+
+# Ordered barplot here
+
+# THIS SHOULD BE PLOTTED WITH PATH ANNOTATION OBJ
+test2 <- shared_data
+test2 <- test2[order(test2$`IDH 0=WT, 1=MUT, NA`),]
+
+## manually get the order of samples, odered based on fraction of m1 macrophages
+
+test3 <- subset(test2, variable=="CD163- macrophage")
+
+test3 <- test3[
+  order(test3[,8], test3[,4], test3[,19]),
+]
+
+set_order <- c(test3$Core.identifier)
+
+library(ggplot2)
+library(forcats)
+
+p <- ggplot(test2, aes(x=factor(Core.identifier, levels = set_order), y=fraction_in_sample, fill=variable)) + geom_bar(stat="identity", position="stack") + scale_fill_discrete(name="Sample") + ggtitle("Cell type frequencies as percentages, percentage per sample") + xlab("Cell type") + ylab("Percentage") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) + scale_fill_manual(values=temp_col) 
+
+print(p)
+
+ggsave(paste("C:/Users/is427866/Documents/hypoxia/", "barplot_celltypes_in_samples", ".png", sep = ""))
+
+```
+
+```{r statistical_test_concerning_celltype}
+# Read in metadata at the start
+# Use result from calc_celltype_fractions_NO_OTHER
+
+# connect metadata to df
+signif_test_df <- merge(shared_data, meta_df, by.x = "Core.identifier", by.y = "TMA_code")
+signif_test_df <- subset(signif_test_df, signif_test_df$`Kuollut 2016 lopussa 1=kuollut` != "NA")
+#signif_test_df <- subset(signif_test_df, signif_test_df$`Prim vs relapse, 1=PRIM, >1=relapse.x` == "1")
+signif_test_df <- subset(signif_test_df, signif_test_df$`IDH 0=WT, 1=MUT, NA.x` == "0")
+
+# wilcox, no separation based on IDH-status
+
+for (ct in unique(signif_test_df$variable)) {
+  sub <- subset(signif_test_df, signif_test_df$variable == ct)
+  print(paste(ct, " ", sep = ""))
+  print(wilcox.test(fraction_in_sample ~ relapse, data=sub))
+}
+
+```
+
+```{r statistical_test_concerning_celltype_celltype_hypoxia_class}
+# Read in metadata at the start
+# Use result from calc_celltype_fractions_NO_OTHER
+
+# connect metadata to df
+signif_test_df <- merge(shared_data, meta_df, by.x = "Core.identifier", by.y = "TMA_code")
+signif_test_df <- subset(signif_test_df, signif_test_df$`Kuollut 2016 lopussa 1=kuollut` != "NA")
+#signif_test_df <- subset(signif_test_df, signif_test_df$`Prim vs relapse, 1=PRIM, >1=relapse.x` == "1")
+signif_test_df <- subset(signif_test_df, signif_test_df$`IDH 0=WT, 1=MUT, NA.x` == "1")
+
+signif_test_df <- subset(signif_test_df, signif_test_df$Name == "Low hypoxia")
+
+# wilcox, no separation based on IDH-status
+
+for (ct in unique(signif_test_df$variable)) {
+  sub <- subset(signif_test_df, signif_test_df$variable == ct)
+  print(paste(ct, " ", sep = ""))
+  print(wilcox.test(fraction_in_hypoxia_class ~ relapse, data=sub))
+}
+
+```
+
+```{r VIZ_boxplots_visualizations_avg_cell_fraction}
+# Read in metadata at the start
+# Use result from calc_celltype_fractions_NO_OTHER
+
+# connect metadata to df
+signif_test_df <- merge(shared_data, meta_df, by.x = "Core.identifier", by.y = "TMA_code")
+signif_test_df <- subset(signif_test_df, signif_test_df$`Kuollut 2016 lopussa 1=kuollut` != "NA")
+#signif_test_df <- subset(signif_test_df, signif_test_df$`Prim vs relapse, 1=PRIM, >1=relapse.x` == "1")
+
+library(ggplot2)
+for (ct in unique(signif_test_df$variable)) {
+  sub <- subset(signif_test_df, signif_test_df$variable == ct)
+  p <- ggplot(sub, aes(Name, fraction_in_hypoxia_class)) +
+  geom_violin(draw_quantiles = c(0.5)) +
+  #geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0)) +
+    ggtitle(ct)
+  print(p)
+  ggsave(paste("C:/Users/is427866/Documents/hypoxia/boxplots_celltype/", ct, ".png", sep = ""))
+  #ggsave(paste("C:/Users/is427866/Documents/hypoxia/boxplots_survival/", ct, ".pdf", sep = ""))
+}
+
+# To see the distributions, plot violin plots of all celltypes in whole dataset
+# and all hypoxia classes. This helps to decide the threshold on low/high 
+# number of cells.
+
+for (ct in unique(signif_test_df$variable)) {
+  sub <- subset(signif_test_df, signif_test_df$variable == ct)
+  
+  sub_hh <- subset(sub, sub$Name == "High hypoxia")
+  p1 <- ggplot(sub_hh, aes(Name, fraction_in_hypoxia_class)) +
+  geom_violin(draw_quantiles = c(0.5)) +
+  #geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0)) +
+    ggtitle(ct)
+  
+  sub_lh <- subset(sub, sub$Name == "Low hypoxia")
+  p2 <- ggplot(sub_lh, aes(Name, fraction_in_hypoxia_class)) +
+  geom_violin(draw_quantiles = c(0.5)) +
+  #geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0)) +
+    ggtitle(ct)
+  
+  sub_nh <- subset(sub, sub$Name == "Non hypoxic")
+  p3 <- ggplot(sub_nh, aes(Name, fraction_in_hypoxia_class)) +
+  geom_violin(draw_quantiles = c(0.5)) +
+  #geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0)) +
+    ggtitle(ct)
+  
+  grid.arrange(p1, p2, p3, ncol=3)
+  
+  ggsave(paste("C:/Users/is427866/Documents/hypoxia/violin_celltypes_in_hypoxia/", ct, ".png", sep = ""))
+  ggsave(paste("C:/Users/is427866/Documents/hypoxia/violin_celltypes_in_hypoxia/", ct, ".pdf", sep = ""))
+}
+
+
+```
+
+```{r survival_test_whole_spot}
+library(survival)
+library(ggplot2)
+library(ggsurvfit)
+library(gridExtra)
+
+# Read in metadata at the start
+# Use result from calc_celltype_fractions_NO_OTHER
+
+# connect metadata to df
+signif_test_df <- merge(shared_data, meta_df, by.x = "Core.identifier", by.y = "TMA_code")
+signif_test_df <- subset(signif_test_df, signif_test_df$`Kuollut 2016 lopussa 1=kuollut` != "NA")
+signif_test_df <- subset(signif_test_df, signif_test_df$`Prim vs relapse, 1=PRIM, >1=relapse.x` == "1")
+
+# calculate survival for each celltype
+
+for (ct in unique(signif_test_df$variable)) {
+  sub <- subset(signif_test_df, signif_test_df$variable == ct)
+  
+  #create variables for high and low fractions of celltype
+  sub$high_or_low <- c("low")
+  sub$high_or_low[sub$fraction_in_sample > median(sub$fraction_in_sample)] <- c("high")
+  
+  # divide based on IDH-status
+  sub_idh_wt <- subset(sub, sub$`IDH 0=WT, 1=MUT, NA.x` == "0")
+  sub_idh_mut <- subset(sub, sub$`IDH 0=WT, 1=MUT, NA.x` == "1")
+  
+  #create objects
+  surv_obj1 <- survfit2(Surv(as.numeric(sub_idh_wt$`Seuranta-aika pvinä`), as.numeric(sub_idh_wt$`Kuollut 2016 lopussa 1=kuollut`)) ~ sub_idh_wt$high_or_low, data = sub_idh_wt)
+  
+  surv_obj2 <- survfit2(Surv(as.numeric(sub_idh_mut$`Seuranta-aika pvinä`), as.numeric(sub_idh_mut$`Kuollut 2016 lopussa 1=kuollut`)) ~ sub_idh_mut$high_or_low, data = sub_idh_mut)
+  
+  # Plot IDH-wt
+  p1 <- ggsurvfit(surv_obj1) + ggtitle(paste(ct, ", IDH-wt", sep = "")) +
+  labs(x = "Days", y = "Overall survival probability") + 
+  add_confidence_interval() #+ 
+    #xlim(0,2000)
+  
+  # Plot IDH-mut
+  #p2 <- ggsurvfit(surv_obj2) + ggtitle(paste(ct, ", IDH-mut", sep = "")) +
+  #labs(x = "Days", y = "Overall survival probability") + 
+  #add_confidence_interval() #+
+  #   xlim(0,2000)
+  
+  #p <- grid.arrange(p1, p2, ncol=2)
+  #print(p1)
+
+  print(ct)
+  print(survdiff(Surv(as.numeric(sub_idh_wt$`Seuranta-aika pvinä`), as.numeric(sub_idh_wt$`Kuollut 2016 lopussa 1=kuollut`)) ~ 1 + sub_idh_wt$high_or_low, data = sub_idh_wt))
+  
+  #ggsave(paste("C:/Users/is427866/Documents/hypoxia/survival_kaplan/whole_spot_with_other_cells/idh_wt_", ct, ".png", sep = ""))
+  #ggsave(paste("C:/Users/is427866/Documents/hypoxia/survival_kaplan/whole_spot_with_other_cells/idh_wt_", ct, ".pdf", sep = ""))
+}
+
+```
+
+
+```{r survival_test_hypoksia_regions}
+library(survival)
+library(ggplot2)
+library(ggsurvfit)
+library(gridExtra)
+
+# Read in metadata at the start
+# Use result from calc_celltype_fractions_NO_OTHER
+
+# connect metadata to df
+signif_test_df <- merge(shared_data, meta_df, by.x = "Core.identifier", by.y = "TMA_code")
+signif_test_df <- subset(signif_test_df, signif_test_df$`Kuollut 2016 lopussa 1=kuollut` != "NA")
+signif_test_df <- subset(signif_test_df, signif_test_df$`Prim vs relapse, 1=PRIM, >1=relapse.x` == "1")
+
+# caculate survival for each celltype in each hypoxia class
+
+for (hr in unique(signif_test_df$Name)) {
+  
+  sub_hr <- subset(signif_test_df, signif_test_df$Name == hr)
+  print(hr)
+
+  for (ct in unique(sub_hr$variable)) {
+    sub <- subset(sub_hr, sub_hr$variable == ct)
+    
+    #create variables for high and low fractions of celltype
+    sub$high_or_low <- c("low")
+    sub$high_or_low[sub$fraction_in_sample > median(sub$fraction_in_sample)] <- c("high")
+    
+    # divide based on IDH-status
+    sub_idh_wt <- subset(sub, sub$`IDH 0=WT, 1=MUT, NA.x` == "0")
+    sub_idh_mut <- subset(sub, sub$`IDH 0=WT, 1=MUT, NA.x` == "1")
+    
+    #create objects
+    surv_obj1 <- survfit2(Surv(as.numeric(sub_idh_wt$`Seuranta-aika pvinä`), as.numeric(sub_idh_wt$`Kuollut 2016 lopussa 1=kuollut`)) ~ 1 + sub_idh_wt$high_or_low, data = sub_idh_wt)
+    
+    #surv_obj2 <- survfit2(Surv(as.numeric(sub_idh_mut$`Seuranta-aika pvinä`), as.numeric(sub_idh_mut$`Kuollut 2016 lopussa 1=kuollut`)) ~ 1 + sub_idh_mut$high_or_low, data = sub_idh_mut)
+    
+    # Plot IDH-wt
+    p1 <- ggsurvfit(surv_obj1) + ggtitle(paste(ct, ", IDH-wt, ", hr, sep = "")) +
+    labs(x = "Days", y = "Overall survival probability") + 
+    add_confidence_interval() #+ 
+      #xlim(0,2000)
+    
+    # Plot IDH-mut
+    # p2 <- ggsurvfit(surv_obj2) + ggtitle(paste(ct, ", IDH-mut", sep = "")) +
+    # labs(x = "Days", y = "Overall survival probability") + 
+    # add_confidence_interval() +
+    #   xlim(0,2000)
+    
+    #grid.arrange(p1, p2, ncol=2)
+    #print(p1)
+    
+    print(ct)
+    print(survdiff(Surv(as.numeric(sub_idh_wt$`Seuranta-aika pvinä`), as.numeric(sub_idh_wt$`Kuollut 2016 lopussa 1=kuollut`)) ~ 1 + sub_idh_wt$high_or_low, data = sub_idh_wt))
+    
+    #ggsave(paste("C:/Users/is427866/Documents/hypoxia/survival_kaplan/idh_wt_", ct, "_", hr, ".png", sep = ""))
+    #ggsave(paste("C:/Users/is427866/Documents/hypoxia/survival_kaplan/idh_wt_", ct, "_", hr, ".pdf", sep = ""))
+  }
+  
+  
+}
+
+```
+
+
+```{r survival_test_only_normoxia_vs_hypoxia_celltype_fractions}
+library(reshape2)
+library(ggplot2)
+### Continue with result from filter_out_samples_with_low_counts_and_no_hypoxia
+
+# Connect unique cases from normoxia only (dropout) and current dataframe
+
+df1 <- subset(modified_for_ct, Name == "PathAnnotationObject")
+df1$survival_group <- c("Hypoxic areas")
+
+df2 <- subset(final_df_removed, Name == "PathAnnotationObject")
+df2$survival_group <- c("Only normoxia")
+
+survival_norm_hypox <- rbind(df1, df2)
+
+# remove CD45- cells (aka other and cancer cells)
+plot_df <- subset(survival_norm_hypox, Name == "PathAnnotationObject")
+plot_df <- plot_df[,-18] # comment this out if you want other cells to be included, make sure other cells are column 18!
+
+#plot_df <- plot_df[,c(4,28,8,9,12,16:24,27)] # Modify these if other cells!
+#ownames(plot_df) <- make.names(plot_df$Core.identifier, unique = TRUE)
+test <- melt(plot_df, measure.vars = c(14:21))
+test$variable <- gsub("Num ", "", test$variable)
+
+test$fraction_in_sample <- 0
+test$fraction_in_hypoxia_class <- 0
+test$fraction_in_hypoxia_class_total <- 0 ## Unnecessary in this
+
+for (i in 0:length(test$Core.identifier)) {
+  n <- test[i,18]
+  temp <- which(test[,18] == n)
+  temp_sum <- sum(test[temp,21])
+  test[i,22] <- (test[i,21]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+  
+  n <- test[i,12]
+  m <- test[i,18]
+  temp <- which(test[,12] == n & test[,18] == m)
+  temp_sum <- sum(test[temp,21])
+  test[i,23] <- (test[i,21]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+  
+  n <- test[i,12]
+  temp <- which(test[,12] == n)
+  temp_sum <- sum(test[temp,21])
+  test[i,24] <- (test[i,21]/temp_sum)*100
+  #table2[i,4] <- (table2[i,3]/re_ordered_n_list[[as.character(n)]])*100
+
+}
+
+shared_data <- test
+
+shared_data <- shared_data %>% replace(is.na(.), 0)
+shared_data[,c(14,15)] <- NULL
+
+
+```
+
+```{r VIZ_survival_test_only_normoxia_vs_hypoxia_celltype_vizualizations}
+
+## Visualization for above part of the script
+
+test <- shared_data
+test$grade_for_plot <- c(NA)
+test[which(test$Grade == 1),"grade_for_plot"] <- "Grade 1"
+test[which(test$Grade == 2 | test$Grade == 3),"grade_for_plot"] <- "Grade 2-3"
+test[which(test$Grade == 4),"grade_for_plot"] <- "Grade 4"
+
+
+for (ct in unique(test$variable)) {
+  temp_ct <- subset(test, grade_for_plot != "Grade 1")
+  temp_ct <- subset(temp_ct, variable == ct)
+  temp_ct <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` != "NA")
+  
+  
+  sub <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "0")
+  p <- ggplot(sub, aes(x=Name, y=fraction_in_hypoxia_class, fill=survival_group)) + geom_boxplot(outlier.shape = NA) + labs(title=paste("Cell type fractions in hypoxia class, IDH-WT, ", ct, sep = " "),x="Grade", y = "Percentage") + geom_jitter(position = position_jitterdodge(jitter.width = 0.05, jitter.height = 0)) #+ scale_colour_manual(values=c("orchid1", "skyblue")) + ylim(0,85) #+ stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0)) 
+  
+  show(p)
+  ggsave(paste("C:/Users/is427866/Documents/hypoxia/boxplots/samples_left_out_comparisons_celltype/idh_wt/", ct, ".png", sep = ""))
+  
+  sub <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "1")
+  p <- ggplot(sub, aes(x=Name, y=fraction_in_hypoxia_class, fill=survival_group)) + geom_boxplot(outlier.shape = NA) + labs(title=paste("Cell type fractions in hypoxia class, IDH-MUT, ", ct, sep = " "),x="Grade", y = "Percentage") + geom_jitter(position = position_jitterdodge(jitter.width = 0.05, jitter.height = 0)) #+ scale_colour_manual(values=c("orchid1", "skyblue")) #+ stat_summary(fun=median, geom="point", size=2, color="red") + geom_jitter(position = position_jitter(0.2, 0))
+  
+  show(p)
+  ggsave(paste("C:/Users/is427866/Documents/hypoxia/boxplots/samples_left_out_comparisons_celltype/idh_mut/", ct, ".png", sep = ""))
+
+  
+  g <- gsub(" ", "_", ct)
+}
+
+ggplot(test, aes(x=survival_group, y=fraction_in_hypoxia_class_total, fill=variable)) + geom_bar(stat="identity", position="stack") + scale_fill_discrete(name="Sample") + ggtitle("Cell type frequencies as percentages, percentage per hypoxia class") + xlab("Hypoxia class") + ylab("Percentage") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +scale_fill_manual(values=temp_col)
+
+```
+
+```{r creating_age_groups}
+# Start with the shared_data object from calc_celltype_fractions_NO_OTHER, that has been 
+
+# connect metadata to df
+signif_test_df <- merge(shared_data, meta_df, by.x = "Core.identifier", by.y = "TMA_code")
+signif_test_df <- subset(signif_test_df, signif_test_df$Ikä != "NA")
+#signif_test_df <- subset(signif_test_df, signif_test_df$`Prim vs relapse, 1=PRIM, >1=relapse.x` == "1")
+signif_test_df <- subset(signif_test_df, signif_test_df$variable == "CD163+ macrophage")
+
+# split the data to IDH-wt and IDH-mut and create age groups
+df_idhmut <- subset(signif_test_df, `IDH 0=WT, 1=MUT, NA.x` == "1")
+df_idhwt <- subset(signif_test_df, `IDH 0=WT, 1=MUT, NA.x` == "0")
+
+print("IDH-wt, old => 55")
+df_idhwt$age_group <- c("Old")
+df_idhwt[which(df_idhwt$Ikä < 55), "age_group"] <- c("Young")
+table(df_idhwt$age_group)
+
+print("IDH-mut, old => 40")
+df_idhmut$age_group <- c("Old")
+df_idhmut[which(df_idhmut$Ikä < 40), "age_group"] <- c("Young")
+table(df_idhmut$age_group)
+
+print("IDH-mut, old => 50")
+df_idhmut$age_group <- c("Old")
+df_idhmut[which(df_idhmut$Ikä < 50), "age_group"] <- c("Young")
+table(df_idhmut$age_group)
+
+print("IDH-mut, old => 55")
+df_idhmut$age_group <- c("Old")
+df_idhmut[which(df_idhmut$Ikä < 55), "age_group"] <- c("Young")
+table(df_idhmut$age_group)
+
+
+
+```
+
