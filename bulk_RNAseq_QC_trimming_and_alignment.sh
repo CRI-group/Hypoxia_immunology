@@ -6,6 +6,7 @@
 #SBATCH -n 1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=10
+#SBATCH --mem= 
 
 #Script to run QC, trim and align bulk RNA seq samples. Made by Iina Koivisto in 2024.
 #Make "STAR" and "fastqc" named folders in your working directory prior to starting the analysis.
