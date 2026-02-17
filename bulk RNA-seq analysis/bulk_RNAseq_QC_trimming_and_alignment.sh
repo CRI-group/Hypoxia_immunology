@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=10
 #SBATCH --mem= 
 
-#Script to run QC, trim and align bulk RNA seq samples. Made by Iina Koivisto in 2024.
+#Script to run QC, trim and align bulk RNA seq samples.
 #Make "STAR" and "fastqc" named folders in your working directory prior to starting the analysis.
 
 #Change file names here to your file names
@@ -19,7 +19,7 @@ prefix="M_19_74_24h_"
 echo "Starting the analysis of $prefix!"
 
 #Quality control
-module load compbio/fastqc/0.11.9
+module load compbio/fastqc/0.11.9-Java-11
 fastqc -o fastqc ${file1}.fq.gz ${file2}.fq.gz
 echo "Fastqc done, starting trimming!"
  
@@ -32,13 +32,13 @@ echo "Trimming done, starting fastqc!"
 fastqc -o fastqc ${file1}_val_1.fq.gz ${file2}_val_2.fq.gz
 echo "Fastqc done, starting alignment!"
 
-#Alignment with STAR compbio/STAR/2.7.10b index created by Anja Hartewig. Located in /lustre/compbio/pub/references/Gencode_v43/STAR_index
-module load compbio/STAR/2.7.10b
+#Alignment with STAR compbio/STAR/2.7.10b 
+module load bio/STAR/2.7.10b-GCC-12.2.0
 STAR --genomeDir /lustre/compbio/pub/references/Gencode_v43/STAR_index/ --runThreadN 2 --readFilesIn ${file1}_val_1.fq.gz ${file2}_val_2.fq.gz --outFileNamePrefix STAR/${prefix} --outSAMtype BAM SortedByCoordinate --readFilesCommand zcat
 echo "Alignment done, starting samtools to make index!"
 
 #making bai index using samtools compbio/samtools/1.15.1
-module load compbio/samtools/1.15.1
+module load bio/SAMtools/1.15.1-GCC-11.3.0
 samtools index STAR/${prefix}Aligned.sortedByCoord.out.bam
 
 #echo "Index done, starting fastqc!"
