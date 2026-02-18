@@ -1,0 +1,386 @@
+---
+title: "Hypoxia project bulk RNAseq gene counting and normalization"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Load packages
+library(Rsubread)
+library(biomaRt)
+library(dplyr)
+library(DESeq2)
+library(readr)
+library(stringr)
+library(rtracklayer)
+library(sva)
+```
+
+# Collect all bam filenames
+```{r}
+# round 1 files
+bam_files_macrophages_M2_batch1 <- c("/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/macrophage_culture_experiment_working_directory/STAR/M2_19_74_24h_Aligned.sortedByCoord.out.bam",
+                                     "/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/macrophage_culture_experiment_working_directory/STAR/M2_5_74_24h_Aligned.sortedByCoord.out.bam",
+                                     "/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/macrophage_culture_experiment_working_directory/STAR/M2_1_24h_Aligned.sortedByCoord.out.bam",
+                                     "/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/macrophage_culture_experiment_working_directory/STAR/M2_0_24h_Aligned.sortedByCoord.out.bam",
+                                     "/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/macrophage_culture_experiment_working_directory/STAR/M2_19_64_24h_Aligned.sortedByCoord.out.bam",
+                                     "/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/macrophage_culture_experiment_working_directory/STAR/M2_5_64_24h_merged_Aligned.sortedByCoord.out.bam")
+
+bam_files_microglia_batch1 <- c("/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/STAR/M_0_24h_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/STAR/M_1_24h_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/STAR/M_5_64_24h_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/STAR/M_5_74_24h_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/STAR/M_19_64_24h_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/scripts/Iina_scripts/Hypoxia_RNAseq_working_directory/STAR/M_19_74_24h_Aligned.sortedByCoord.out.bam")
+
+bam_files_macrophages_M2_batch2 <- c("/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_5_64_1_Aligned.sortedByCoord.out.bam",
+                                    "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_5_64_2_Aligned.sortedByCoord.out.bam",
+                                    "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_19_64_1_Aligned.sortedByCoord.out.bam",
+                                    "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_19_64_2_Aligned.sortedByCoord.out.bam",
+                                    "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_19_74_1_Aligned.sortedByCoord.out.bam",
+                                    "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_19_74_2_Aligned.sortedByCoord.out.bam",
+                                    "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_1_1_Aligned.sortedByCoord.out.bam",
+                                    "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_1_2_Aligned.sortedByCoord.out.bam",
+                                    "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_0_1_Aligned.sortedByCoord.out.bam",
+                                    "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_0_2_Aligned.sortedByCoord.out.bam",
+                                    "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_5_74_1_Aligned.sortedByCoord.out.bam",
+                                    "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_170325/STAR/M2_5_74_2_Aligned.sortedByCoord.out.bam")
+
+bam_files_microglia_batch2 <- c("/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_19_64_1_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_19_74_1_1_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_1_1_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_1_2_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_5_64_1_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_5_64_2_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_5_74_1_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_5_74_2_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_0_1_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_0_2_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_19_64_2_Aligned.sortedByCoord.out.bam",
+                                "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_170325/STAR/MG_19_74_1_2_Aligned.sortedByCoord.out.bam")
+
+bam_files_macrophages_M2_batch3 <- c(
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_0_N_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_0_N_24_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19N24A1_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19N24A1_3_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19_A_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19_A_24_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19_A_48_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19_A_48_3_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19_A_48_4_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19_N_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19_N_24_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19_N_48_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19_N_48_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_19_N_48_3_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_1_A_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_1_A_24_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_1_A_24_3_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_1_A_24_4_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_1_N_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_1_N_24_3_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_5_A_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_5_A_24_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_5_A_48_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_5_A_48_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_5_A_48_3_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_5_N_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_5_N_24_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_5_N_48_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_5_N_48_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Macrophages_030925/STAR/M2_5_N_48_4_Aligned.sortedByCoord.out.bam"
+)
+
+bam_files_microglia_batch3 <- c(
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_0_N_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_0_N_24_4_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_19_A_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_19_A_24_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_19_N_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_19_N_24_3_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_1_A_24_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_1_A_24_5_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_1_A_24_6_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_1_N_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_1_N_24_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_5_A_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_5_A_24_2_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_5_N_24_1_Aligned.sortedByCoord.out.bam",
+  "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/Microglia_030925/STAR/MG_5_N_24_2_Aligned.sortedByCoord.out.bam"
+)
+
+bam_files_macrophages <- c(bam_files_macrophages_M2_batch1, bam_files_macrophages_M2_batch2, bam_files_macrophages_M2_batch3)
+bam_files_microglia <- c(bam_files_microglia_batch1, bam_files_microglia_batch2, bam_files_microglia_batch3)
+```
+
+# Count features
+## Microglia
+```{r}
+# Run featureCounts
+fc_results <- featureCounts(
+  files = bam_files_microglia,
+  annot.ext = "/scratch/svc_td_compbio/tools/Gencode_v43/gencode.v43.annotation.gtf",  # Path to your GTF annotation
+  isGTFAnnotationFile = TRUE,
+  GTF.attrType = "gene_id",              # Summarize to gene level
+  useMetaFeatures = TRUE,                # Count at gene level (meta-features)
+  allowMultiOverlap = FALSE,              # Allow reads to overlap multiple features
+  countMultiMappingReads = FALSE,         # Count multi-mapping reads
+  fraction = FALSE,                       # Use fractional counting for multi-mapping reads
+  nthreads = 10,                          # Use 8 CPU threads
+  isPairedEnd = TRUE                     # Set to TRUE if paired-end data
+)
+
+# The results will include:
+# - fc_results$counts: count matrix (genes in rows, samples in columns)
+# - fc_results$annotation: gene annotation information
+# - fc_results$stat: summary statistics about the counting process
+
+# Save the count matrix to a file
+write.table(fc_results$counts, 
+            file = "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/count_matrix_featureCounts_all2_microglia_multimapped_ignored_gene_level_counts.csv", 
+            sep = "\t", 
+            quote = FALSE, 
+            row.names = TRUE)
+
+# Save the complete results object for later use
+save(fc_results, file = "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/featureCounts_results_all2_microglia_multimapped_ignored_gene_level_counts.RData")
+```
+
+```{r}
+load(file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/featureCounts_results_all2_microglia_multimapped_ignored_gene_level_counts.RData")
+
+#Get raw count matrix
+fC_Genecode_annotation_counts <- as.data.frame(fc_results$counts)
+fC_Genecode_annotation_counts$ensembl_id_version <- row.names(fC_Genecode_annotation_counts) 
+
+# Import your GTF file
+gtf <- import("/scratch/svc_td_compbio/tools/Gencode_v43/gencode.v43.annotation.gtf")
+
+# Convert to data frame and extract relevant information
+gtf_df <- as.data.frame(gtf)
+gene_info <- subset(gtf_df, type == "gene")
+gene_info <- gene_info[,c(1:7, 10:12)]
+
+# Merge with counts
+fC_Genecode_annotation_counts <- merge(fC_Genecode_annotation_counts, gene_info, by.x="ensembl_id_version", by.y="gene_id", all.x = TRUE, all.y = FALSE)
+
+# Gene annotation statistics
+gene_type_stats <- as.data.frame(summary(factor(fC_Genecode_annotation_counts$gene_type)))
+save(gene_type_stats, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/gene_type_stats_all2_microglia_multimapped_ignored_gene_level_counts.RData")
+
+
+# protein coding genes. Other genes excluded.
+fC_Genecode_annotation_counts_protein_coding <- subset(fC_Genecode_annotation_counts, gene_type == "protein_coding")
+#fC_Genecode_annotation_counts_protein_coding <- subset(fC_Genecode_annotation_counts_protein_coding, gene_name != "")
+
+
+# multiple copies of the gene symbol in the df. Due to transcription variants. Deleted.
+sum(as.numeric(summary(factor(fC_Genecode_annotation_counts_protein_coding$gene_name), maxsum = 30000)) > 1)
+
+fC_Genecode_annotation_counts_protein_coding_multiple_copies <- subset(fC_Genecode_annotation_counts_protein_coding, gene_name %in% names(summary(factor(fC_Genecode_annotation_counts_protein_coding$gene_name), maxsum = 30000)[which(as.numeric(summary(factor(fC_Genecode_annotation_counts_protein_coding$gene_name), maxsum = 30000)) > 1)]))
+
+# Genes with have multiple ensembl annotations -> deleted all
+fC_Genecode_annotation_counts_protein_coding <- subset(fC_Genecode_annotation_counts_protein_coding, !(gene_name %in% unique(fC_Genecode_annotation_counts_protein_coding_multiple_copies$gene_name)))
+
+# save statistics
+df_add <- as.data.frame(NA, ncol = 1)
+row.names(df_add) <- "filtered_protein_coding"
+df_add[1,1] <- nrow(fC_Genecode_annotation_counts_protein_coding)
+colnames(df_add) <- "count"
+colnames(gene_type_stats) <- "count"
+gene_type_stats <- rbind(df_add, gene_type_stats)
+save(gene_type_stats, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/gene_type_stats_all2_microglia_multimapped_ignored_gene_level_counts.RData")
+
+save(fC_Genecode_annotation_counts_protein_coding, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/count_matrix_protein_coding_featureCounts_all2_microglia_multimapped_ignored_gene_level_counts.RData")
+```
+
+## Macrophages
+```{r}
+# Run featureCounts
+fc_results <- featureCounts(
+  files = bam_files_macrophages,
+  annot.ext = "/scratch/svc_td_compbio/tools/Gencode_v43/gencode.v43.annotation.gtf",  # Path to your GTF annotation
+  isGTFAnnotationFile = TRUE,
+  GTF.attrType = "gene_id",              # Summarize to gene level
+  useMetaFeatures = TRUE,                # Count at gene level (meta-features)
+  allowMultiOverlap = FALSE,              # Allow reads to overlap multiple features
+  countMultiMappingReads = FALSE,         # Count multi-mapping reads
+  fraction = FALSE,                       # Use fractional counting for multi-mapping reads
+  nthreads = 10,                          # Use 8 CPU threads
+  isPairedEnd = TRUE                     # Set to TRUE if paired-end data
+)
+
+# The results will include:
+# - fc_results$counts: count matrix (genes in rows, samples in columns)
+# - fc_results$annotation: gene annotation information
+# - fc_results$stat: summary statistics about the counting process
+
+# Save the count matrix to a file
+write.table(fc_results$counts, 
+            file = "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/count_matrix_featureCounts_all2_macrophages_multimapped_ignored_gene_level_counts.csv", 
+            sep = "\t", 
+            quote = FALSE, 
+            row.names = TRUE)
+
+# Save the complete results object for later use
+save(fc_results, file = "/lustre/compbio/projects/glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/featureCounts_results_all2_macrophages_multimapped_ignored_gene_level_counts.RData")
+```
+
+```{r}
+load(file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/featureCounts_results_all2_macrophages_multimapped_ignored_gene_level_counts.RData")
+
+#Get raw count matrix
+fC_Genecode_annotation_counts <- as.data.frame(fc_results$counts)
+fC_Genecode_annotation_counts$ensembl_id_version <- row.names(fC_Genecode_annotation_counts) 
+
+# Import your GTF file
+gtf <- import("/scratch/svc_td_compbio/tools/Gencode_v43/gencode.v43.annotation.gtf")
+
+# Convert to data frame and extract relevant information
+gtf_df <- as.data.frame(gtf)
+gene_info <- subset(gtf_df, type == "gene")
+gene_info <- gene_info[,c(1:7, 10:12)]
+
+#merge with counts
+fC_Genecode_annotation_counts <- merge(fC_Genecode_annotation_counts, gene_info, by.x="ensembl_id_version", by.y="gene_id", all.x = TRUE, all.y = FALSE)
+
+# Gene annotation statistics
+gene_type_stats <- as.data.frame(summary(factor(fC_Genecode_annotation_counts$gene_type)))
+save(gene_type_stats, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/gene_type_stats_all2_macrophages_multimapped_ignored_gene_level_counts.RData")
+
+
+# protein coding genes. Other genes excluded.
+fC_Genecode_annotation_counts_protein_coding <- subset(fC_Genecode_annotation_counts, gene_type == "protein_coding")
+#fC_Genecode_annotation_counts_protein_coding <- subset(fC_Genecode_annotation_counts_protein_coding, gene_name != "")
+
+
+# multiple copies of the gene symbol in the df. Due to transcription variants. Deleted.
+sum(as.numeric(summary(factor(fC_Genecode_annotation_counts_protein_coding$gene_name), maxsum = 30000)) > 1)
+
+fC_Genecode_annotation_counts_protein_coding_multiple_copies <- subset(fC_Genecode_annotation_counts_protein_coding, gene_name %in% names(summary(factor(fC_Genecode_annotation_counts_protein_coding$gene_name), maxsum = 30000)[which(as.numeric(summary(factor(fC_Genecode_annotation_counts_protein_coding$gene_name), maxsum = 30000)) > 1)]))
+
+# genes with multiple ensembl annotations -> deleted all
+fC_Genecode_annotation_counts_protein_coding <- subset(fC_Genecode_annotation_counts_protein_coding, !(gene_name %in% unique(fC_Genecode_annotation_counts_protein_coding_multiple_copies$gene_name)))
+
+# save statistics
+df_add <- as.data.frame(NA, ncol = 1)
+row.names(df_add) <- "filtered_protein_coding"
+df_add[1,1] <- nrow(fC_Genecode_annotation_counts_protein_coding)
+colnames(df_add) <- "count"
+colnames(gene_type_stats) <- "count"
+gene_type_stats <- rbind(df_add, gene_type_stats)
+save(gene_type_stats, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/gene_type_stats_all2_macrophages_multimapped_ignored_gene_level_counts.RData")
+
+save(fC_Genecode_annotation_counts_protein_coding, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/count_matrix_protein_coding_featureCounts_all2_macrophages_multimapped_ignored_gene_level_counts.RData")
+```
+
+
+# Reduce batch effect with combatseq
+## Microglia
+```{r}
+load( file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/count_matrix_protein_coding_featureCounts_all2_microglia_multimapped_ignored_gene_level_counts.RData")
+
+# prepare count matrix
+count_matrix <- as.matrix(fC_Genecode_annotation_counts_protein_coding[, c(2:34)])
+row.names(count_matrix) <- fC_Genecode_annotation_counts_protein_coding$gene_name
+colnames(count_matrix) <- unlist(str_split(colnames(count_matrix), pattern = "_Aligned"))[seq(1, 66, 2)]
+
+# prepare parameters
+group <- c("MG_0%(O2)_7.4pH", "MG_1%(O2)_7.4pH", "MG_5%(O2)_6.4pH", "MG_5%(O2)_7.4pH", "MG_19%(O2)_6.4pH", "MG_19%(O2)_7.4pH", "MG_19%(O2)_6.4pH", "MG_19%(O2)_7.4pH", "MG_1%(O2)_7.4pH", "MG_1%(O2)_7.4pH", "MG_5%(O2)_6.4pH", "MG_5%(O2)_6.4pH", "MG_5%(O2)_7.4pH", "MG_5%(O2)_7.4pH", "MG_0%(O2)_7.4pH", "MG_0%(O2)_7.4pH", "MG_19%(O2)_6.4pH", "MG_19%(O2)_7.4pH", "MG_0%(O2)_7.4pH", "MG_0%(O2)_7.4pH",  "MG_19%(O2)_6.4pH", "MG_19%(O2)_6.4pH", "MG_19%(O2)_7.4pH", "MG_19%(O2)_7.4pH", "MG_1%(O2)_6.4pH",  "MG_1%(O2)_6.4pH",  "MG_1%(O2)_6.4pH",  "MG_1%(O2)_7.4pH",  "MG_1%(O2)_7.4pH",  "MG_5%(O2)_6.4pH",  "MG_5%(O2)_6.4pH",  "MG_5%(O2)_7.4pH", "MG_5%(O2)_7.4pH")
+
+batch <- c(rep("1", 6), rep("2", 12), rep("3", 15))
+
+#Run batch effect reduction tool
+adjusted_count_matrix <- ComBat_seq(count_matrix, batch=batch, group=group)
+
+save(adjusted_count_matrix,  file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/adjusted_count_matrix_protein_coding_featureCounts_all2_microglia_multimapped_ignored_gene_level_counts.RData")
+```
+
+## Macrophages
+```{r}
+load( file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/count_matrix_protein_coding_featureCounts_all2_macrophages_multimapped_ignored_gene_level_counts.RData")
+
+# prepare count matrix
+count_matrix <- as.matrix(fC_Genecode_annotation_counts_protein_coding[, c(2:25,29:30, 34:41, 45:46)])
+row.names(count_matrix) <- fC_Genecode_annotation_counts_protein_coding$gene_name
+colnames(count_matrix) <- unlist(str_split(colnames(count_matrix), pattern = "_Aligned"))[seq(1, 72, 2)]
+
+# prepare parameters
+group <-  c("MDM_19%(O2)_7.4pH_24h", "MDM_5%(O2)_7.4pH_24h", "MDM_1%(O2)_7.4pH_24h", "MDM_0%(O2)_7.4pH_24h", "MDM_19%(O2)_6.4pH_24h", "MDM_5%(O2)_6.4pH_24h", "MDM_5%(O2)_6.4pH_24h", "MDM_5%(O2)_6.4pH_24h",  "MDM_19%(O2)_6.4pH_24h", "MDM_19%(O2)_6.4pH_24h", "MDM_19%(O2)_7.4pH_24h", "MDM_19%(O2)_7.4pH_24h", "MDM_1%(O2)_7.4pH_24h", "MDM_1%(O2)_7.4pH_24h", "MDM_0%(O2)_7.4pH_24h", "MDM_0%(O2)_7.4pH_24h", "MDM_5%(O2)_7.4pH_24h", "MDM_5%(O2)_7.4pH_24h", "MDM_0%(O2)_7.4pH_24h", "MDM_0%(O2)_7.4pH_24h", "MDM_19%(O2)_7.4pH_24h", "MDM_19%(O2)_7.4pH_24h", "MDM_19%(O2)_6.4pH_24h", "MDM_19%(O2)_6.4pH_24h",  "MDM_19%(O2)_7.4pH_24h", "MDM_19%(O2)_7.4pH_24h", "MDM_1%(O2)_6.4pH_24h", "MDM_1%(O2)_6.4pH_24h", "MDM_1%(O2)_6.4pH_24h", "MDM_1%(O2)_6.4pH_24h", "MDM_1%(O2)_7.4pH_24h", "MDM_1%(O2)_7.4pH_24h", "MDM_5%(O2)_6.4pH_24h",  "MDM_5%(O2)_6.4pH_24h", "MDM_5%(O2)_7.4pH_24h", "MDM_5%(O2)_7.4pH_24h")
+
+batch <- c(rep("1", 6), rep("2", 12), rep("3", 18))
+
+# Run batch effect reduction tool
+adjusted_count_matrix <- ComBat_seq(count_matrix, batch=batch, group=group)
+
+save(adjusted_count_matrix,  file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/adjusted_count_matrix_protein_coding_featureCounts_all2_microglia_multimapped_ignored_gene_level_counts.RData")
+```
+
+# Merge and normalize separately adjusted count matrixes with DESeq2
+```{r}
+# Normalizing the data with Deseq2 median of ratios normalization
+
+#load and merge adjusted matrices
+load(file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/adjusted_count_matrix_protein_coding_featureCounts_all2_microglia_multimapped_ignored_gene_level_counts.RData")
+adjusted_count_matrix_microglia <- adjusted_count_matrix
+
+load(file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/adjusted_count_matrix_protein_coding_featureCounts_all2_macrophages_multimapped_ignored_gene_level_counts_only24h.RData")
+adjusted_count_matrix_macrophages <- adjusted_count_matrix
+
+adjusted_count_matrix <- merge(adjusted_count_matrix_microglia, adjusted_count_matrix_macrophages, by = "row.names")
+row.names(adjusted_count_matrix) <- adjusted_count_matrix$Row.names
+adjusted_count_matrix <- adjusted_count_matrix[, 2:ncol(adjusted_count_matrix)]
+
+#Plot count distribution before normalisation
+row_medians <- apply(adjusted_count_matrix, 1, median)
+max(row_medians)
+pdf("/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/adjusted_counts_boxplots_before_normalization_microglia_macrophages_combatseq_separately.pdf", width = 10, height = 5)
+boxplot(row_medians, ylim = c(0, 1800))
+par(mar = c(10, 4, 4, 2) + 0.1)
+boxplot(adjusted_count_matrix, ylim = c(0, 6000), las = 2)
+dev.off()
+sum(row_medians == 0) 
+
+#sample information matrix
+column_names = colnames(adjusted_count_matrix)
+sample_types = matrix(NA, nrow = length(column_names), ncol = 3)
+rownames(sample_types) = column_names
+colnames(sample_types) = c("sample", "condition", "sequencing_batch")
+sample_types[, 1] <- column_names
+
+sample_types[,2] <- c("MG_0%(O2)_7.4pH", "MG_1%(O2)_7.4pH", "MG_5%(O2)_6.4pH", "MG_5%(O2)_7.4pH", "MG_19%(O2)_6.4pH", "MG_19%(O2)_7.4pH", "MG_19%(O2)_6.4pH", "MG_19%(O2)_7.4pH", "MG_1%(O2)_7.4pH", "MG_1%(O2)_7.4pH", "MG_5%(O2)_6.4pH", "MG_5%(O2)_6.4pH", "MG_5%(O2)_7.4pH", "MG_5%(O2)_7.4pH", "MG_0%(O2)_7.4pH", "MG_0%(O2)_7.4pH", "MG_19%(O2)_6.4pH", "MG_19%(O2)_7.4pH", "MG_0%(O2)_7.4pH", "MG_0%(O2)_7.4pH",  "MG_19%(O2)_6.4pH", "MG_19%(O2)_6.4pH", "MG_19%(O2)_7.4pH", "MG_19%(O2)_7.4pH", "MG_1%(O2)_6.4pH",  "MG_1%(O2)_6.4pH",  "MG_1%(O2)_6.4pH",  "MG_1%(O2)_7.4pH",  "MG_1%(O2)_7.4pH",  "MG_5%(O2)_6.4pH",  "MG_5%(O2)_6.4pH",  "MG_5%(O2)_7.4pH", "MG_5%(O2)_7.4pH", "MDM_19%(O2)_7.4pH_24h", "MDM_5%(O2)_7.4pH_24h", "MDM_1%(O2)_7.4pH_24h", "MDM_0%(O2)_7.4pH_24h", "MDM_19%(O2)_6.4pH_24h", "MDM_5%(O2)_6.4pH_24h", "MDM_5%(O2)_6.4pH_24h", "MDM_5%(O2)_6.4pH_24h",  "MDM_19%(O2)_6.4pH_24h", "MDM_19%(O2)_6.4pH_24h", "MDM_19%(O2)_7.4pH_24h", "MDM_19%(O2)_7.4pH_24h", "MDM_1%(O2)_7.4pH_24h", "MDM_1%(O2)_7.4pH_24h", "MDM_0%(O2)_7.4pH_24h", "MDM_0%(O2)_7.4pH_24h", "MDM_5%(O2)_7.4pH_24h", "MDM_5%(O2)_7.4pH_24h", "MDM_0%(O2)_7.4pH_24h", "MDM_0%(O2)_7.4pH_24h", "MDM_19%(O2)_7.4pH_24h", "MDM_19%(O2)_7.4pH_24h", "MDM_19%(O2)_6.4pH_24h", "MDM_19%(O2)_6.4pH_24h", "MDM_19%(O2)_7.4pH_24h", "MDM_19%(O2)_7.4pH_24h", "MDM_1%(O2)_6.4pH_24h", "MDM_1%(O2)_6.4pH_24h", "MDM_1%(O2)_6.4pH_24h", "MDM_1%(O2)_6.4pH_24h", "MDM_1%(O2)_7.4pH_24h", "MDM_1%(O2)_7.4pH_24h", "MDM_5%(O2)_6.4pH_24h",  "MDM_5%(O2)_6.4pH_24h",  "MDM_5%(O2)_7.4pH_24h", "MDM_5%(O2)_7.4pH_24h")
+
+sample_types[,3] <-  c(rep("1", 6), rep("2", 12), rep("3", 15), rep("1", 6), rep("2", 12), rep("3", 18) )
+
+
+## creating data set expected by DESeq2
+dataset <- DESeqDataSetFromMatrix(countData=adjusted_count_matrix, 
+                                  colData=sample_types, 
+                                  design= ~ condition)
+
+# Run DESeq2 normalization
+dds <- DESeq(dataset)
+
+# Fetch normalized count matrix
+count_matrix_mor_normed <- counts(dds, normalized=TRUE)
+count_matrix_mor_normed <- as.data.frame(count_matrix_mor_normed)
+
+save(count_matrix_mor_normed, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/count_matrix_Combatseq_DE_protein_coding_featureCounts_all2_microglia_macrophages_combatseq_separately_multimapped_ignored_gene_level_counts.RData")
+save(dds, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/object_Combatseq_protein_coding_featureCounts_all2_microglia_macrophages_combatseq_separately_multimapped_ignored_gene_level_counts.RData")
+```
+
+```{r}
+#Plot count distribution after normalization
+
+row_medians <- apply(count_matrix_mor_normed, 1, median)
+max(row_medians)
+pdf("/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/New_results_with_all_batches_0925/counts_boxplots_Combatseq_DESEq2_normalization_microglia_macrophaes_combatseq_separately.pdf", width = 10, height = 5)
+boxplot(row_medians, ylim = c(0, 1800))
+par(mar = c(10, 4, 4, 2) + 0.1)
+boxplot(count_matrix_mor_normed, ylim = c(0, 6000), las = 2)
+dev.off()
+```
