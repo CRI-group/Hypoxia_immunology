@@ -1,0 +1,1229 @@
+---
+title: "Hypoxia project scRNAseq data analysis"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(Seurat)
+set.seed(4321)
+library(ggplot2)
+library(readr)
+library(readxl)
+library(RColorBrewer)
+library(gridExtra)
+library(MAST)
+library(circlize)
+library(clusterProfiler)
+library(DOSE)
+library(org.Hs.eg.db)
+library(dplyr)
+library(ggVennDiagram)
+library(stringr)
+```
+
+# Importing data sets
+```{r}
+#Import harmony integrated data set
+glioblastoma_scRNAseq_Seurat_Harmony <- readRDS("/lustre/compbio/projects/glioma_scRNAseq/data/Seurat_objects/combined_10X_unfilttered_CNV_final_mt_removed_Harmony.RDS")
+```
+
+```{r}
+# Import colors
+tsne_5_colors <- c("#BEAED4", "#386CB0","#7FC97F","#C75792", "#666666")
+accent_3_hypoxia_classes <- c("#7FC97F", "#BEAED4", "#C75792")
+accent_4_colours <- c("#BEAED4", "#C75792", "#FDC086", "#FFFF99")
+```
+
+
+```{r}
+# Add Author information to metadata
+orig.idents <- unique(glioblastoma_scRNAseq_Seurat_Harmony@meta.data$orig.ident)
+author <- c()
+for(orig.ident in glioblastoma_scRNAseq_Seurat_Harmony$orig.ident) {
+  if(orig.ident == "GSE140819_MGH125") {
+    author <- c(author, "Slyper")
+  }else if(orig.ident %in% orig.idents[2:13]) {
+    author <- c(author, "Antunes")
+  }else if(orig.ident %in% orig.idents[14:22]) {
+    author <- c(author, "Neftel")
+  }else if(orig.ident %in% orig.idents[23:45]) {
+    author <- c(author, "Richardson")
+  }else {
+    author <- c(author, NA)
+  }
+}
+
+glioblastoma_scRNAseq_Seurat_Harmony@meta.data$author <- author
+```
+
+```{r}
+# Adding type information to metadata
+orig.idents <- unique(glioblastoma_scRNAseq_Seurat_Harmony@meta.data$orig.ident)
+primary <- orig.idents[c(2:8, 14:16, 18, 20:38)]
+recurrent <- orig.idents[c(9:13, 39:45)]
+type <- c()
+
+for(orig.ident in glioblastoma_scRNAseq_Seurat_Harmony$orig.ident){
+  if(orig.ident %in% primary){
+    type <- c(type, "primary")
+  }
+  else if(orig.ident %in% recurrent){
+    type <- c(type, "recurrent")
+  }
+  else{
+    type <- c(type, NA)
+  }
+}
+
+glioblastoma_scRNAseq_Seurat_Harmony@meta.data$type <- type
+```
+
+# Calculating QC metrics
+```{r}
+#Plot violin plots of data set features per sample
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/QC/VlnPlot_nCount_RNA_new.pdf", height = 6, width = 13)
+VlnPlot(object = glioblastoma_scRNAseq_Seurat_Harmony,
+features = c("nCount_RNA"), split.by = "author", group.by = "orig.ident", pt.size = 0, cols = c("#F8766D","#7CAE00", "#00BFC4", "#C77CFF"))
+dev.off()
+
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/QC/VlnPlot_nFeature_RNA_new.pdf", height = 6, width = 13)
+VlnPlot(object = glioblastoma_scRNAseq_Seurat_Harmony,
+features = c("nFeature_RNA"), split.by = "author", group.by = "orig.ident", pt.size = 0, cols = c("#F8766D","#7CAE00", "#00BFC4", "#C77CFF"))
+dev.off()
+
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/QC/VlnPlot_percent_mt_new.pdf", height = 6, width = 13)
+VlnPlot(object = glioblastoma_scRNAseq_Seurat_Harmony,
+features = c("percent.mt"), assay = "RNA", split.by = "author", group.by = "orig.ident", pt.size = 0, cols = c("#F8766D","#7CAE00", "#00BFC4", "#C77CFF"))
+dev.off()
+```
+
+```{r}
+# Plot an elbowplot to determine informative harmony embeddings
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/QC/ElbowPlot_harmony_embeddings_new.pdf", height = 3, width = 6)
+ElbowPlot(glioblastoma_scRNAseq_Seurat_Harmony, ndims = 50,
+reduction = "harmony")
+dev.off()
+```
+
+# Studying cell cycle of the cells
+```{r}
+# Estimate cell cycle phase for each cell
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+glioblastoma_scRNAseq_Seurat_Harmony<- CellCycleScoring(glioblastoma_scRNAseq_Seurat_Harmony, s.features = s.genes, g2m.features = g2m.genes)
+```
+
+# Integrated analysis
+```{r}
+# Finding neighbors and clustering the cells
+glioblastoma_scRNAseq_Seurat_Harmony <- FindNeighbors(
+  glioblastoma_scRNAseq_Seurat_Harmony, reduction = "harmony", dims = 1:40)
+
+glioblastoma_scRNAseq_Seurat_Harmony <- FindClusters(
+  glioblastoma_scRNAseq_Seurat_Harmony, resolution = 3) # default resolution 0.8
+```
+
+## Non-linear dimensional reduction t-distributed stochastic neighbor embedding (TSNE)
+```{r}
+# Non-linear dimensional reduction (TSNE)
+glioblastoma_scRNAseq_Seurat_Harmony <- RunTSNE(glioblastoma_scRNAseq_Seurat_Harmony, reduction = "harmony", dims = 1:40)
+```
+
+# Annotating cell types
+```{r}
+#plot marker genes per cluster in DotPlot
+
+Idents(glioblastoma_scRNAseq_Seurat_Harmony) <- "seurat_clusters"
+
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/Dotplot_marker_genes_DotPlot_new.pdf", height = 20, width = 18)
+DotPlot(glioblastoma_scRNAseq_Seurat_Harmony, features = c("CD274"  ,   "ITGAX"  ,  "CD68"   ,  "IL7R"   ,  "PDCD1LG2" ,"CD4"    ,  "CD8A" ,    "CD69"   ,  "CD3E"  ,   "ITGA4"   , "MS4A1"  ,  "CD19"   ,      "CCR6"   ,  "FCER1A" ,  "PTPRC"  ,  "CD33"  ,  "FCGR3A"  , "TMEM119" , "GZMB"    , "CD1C"   ,  "CD1B"    , "CD1A"   ,  "HLA-DRA"   ,  "PECAM1"  ,    "CCR4"   ,  "CD163"  ,  "MRC1"  ,   "NCAM1"  ,  "CD244"   , "OLIG1" ,   "OLIG2"  ,  "MOG" ,     "MAG"    ,  "SOX10"   , "CLDN11" ,  "MBP"   ,   "IL3RA"   ,      "CTLA4"  ,  "FOXP3" )) +
+coord_flip() + scale_colour_gradient2(low = "blue", mid = '#d3d3d3', high = "red") +
+xlab("Gene") + ylab("Cluster") +
+#plot_annotation(title = "") +
+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+dev.off()
+```
+
+```{r}
+# Add simplified cell type annotations
+simplified_cell_types <- read_excel("/lustre/compbio/projects/glioma_scRNAseq/data/simplified_cell_types.xlsx")
+glioblastoma_scRNAseq_Seurat_Harmony@meta.data$simplified_cell_types <- NA
+
+for(cluster in 0:65){
+  cell_in_cluster <- glioblastoma_scRNAseq_Seurat_Harmony@meta.data$seurat_clusters == cluster
+  glioblastoma_scRNAseq_Seurat_Harmony@meta.data$simplified_cell_types[cell_in_cluster] <- simplified_cell_types$`cell type`[1 + cluster]
+}
+
+#Adding cancer cell annotations based on CNV annotations
+glioblastoma_scRNAseq_Seurat_Harmony@meta.data$simplified_cell_types[glioblastoma_scRNAseq_Seurat_Harmony@meta.data$infercnv.annotation == "CNV"] <- "Cancer cells"
+```
+
+```{r}
+# Add selected cell type annotations
+selected_annotations <- read_excel("/lustre/compbio/projects/glioma_scRNAseq/data/selected_annotations.xlsx")
+glioblastoma_scRNAseq_Seurat_Harmony@meta.data$selected_annotations <- NA
+
+for(cluster in 0:65){
+  cell_in_cluster <- glioblastoma_scRNAseq_Seurat_Harmony@meta.data$seurat_clusters == cluster
+  glioblastoma_scRNAseq_Seurat_Harmony@meta.data$selected_annotations[cell_in_cluster] <- selected_annotations$`cell type`[1 + cluster]
+}
+
+#Adding cancer cell annotations based on CNV annotations
+glioblastoma_scRNAseq_Seurat_Harmony@meta.data$selected_annotations[glioblastoma_scRNAseq_Seurat_Harmony@meta.data$infercnv.annotation == "CNV"] <- "Cancer cells"
+```
+
+```{r,fig.width=15, fig.height=9}
+# Visualisation of the simplified cell types in the tsne map
+
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/simplified_annotations_tsne.pdf", width = 11, # The width of the plot in inches
+    height = 8) # The height of the plot in inches)
+
+  DimPlot(glioblastoma_scRNAseq_Seurat_Harmony, reduction = "tsne", group.by = "simplified_cell_types",label = FALSE,raster=FALSE , cols = tsne_5_colors, pt.size = 0.5) & ggtitle("") & theme(legend.text = element_text(size = 20), axis.title = element_text(size = 20), axis.text = element_text(size = 16))
+  
+dev.off()
+```
+
+```{r,fig.width=15, fig.height=9}
+# Visualisation of the selected annotations in the tsne map
+
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/selected_annotations_tsne.pdf", width = 11, # The width of the plot in inches
+    height = 8) # The height of the plot in inches)
+
+  DimPlot(glioblastoma_scRNAseq_Seurat_Harmony, reduction = "tsne", group.by = "selected_annotations",label = FALSE,raster=FALSE , cols = c("brown4", tsne_5_colors), pt.size = 0.5, shuffle = TRUE) & ggtitle("") & theme(legend.text = element_text(size = 20), axis.title = element_text(size = 20), axis.text = element_text(size = 16))
+  
+dev.off()
+```
+
+
+# Defining hypoxia states
+```{r}
+# Calculate hypoxia gene set activity scores
+hypoxia_gene_set <- list(c("VEGFA", "ADM", "PDK1", "CA9"))
+
+# filtered hypoxia gene set
+glioblastoma_scRNAseq_Seurat_Harmony <- AddModuleScore(
+  glioblastoma_scRNAseq_Seurat_Harmony,features = hypoxia_gene_set, search = TRUE )
+
+colnames(glioblastoma_scRNAseq_Seurat_Harmony@meta.data) <- c(colnames(glioblastoma_scRNAseq_Seurat_Harmony@meta.data[1:length(colnames(glioblastoma_scRNAseq_Seurat_Harmony@meta.data)) - 1]), "hypoxia_score")
+```
+
+```{r}
+# statistics of filtered hypoxia gene set scores
+min(glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_score)
+max(glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_score)
+median(glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_score)
+
+# Visualize limits for hypoxia classes
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/hypoxia_score_hist_version2.pdf", width = 3, # The width of the plot in inches
+    height = 3) 
+hist(glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_score,
+breaks = "FD", main = "",
+cex.main = 0.75, xlab = "Hypoxia gene set activity score", xlim = c(-0.5,3))
+
+abline(v = c(0, 0.3), col= c("#BEAED4", "#C75792"))
+
+dev.off()
+
+# Annotating cells into 3 hypoxia classes.
+glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_classification <- NA
+glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_classification[glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_score <= 0] <- "normoxia"
+glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_classification[glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_score > 0 & glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_score <= 0.3] <- "low hypoxia"
+glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_classification[glioblastoma_scRNAseq_Seurat_Harmony@meta.data$hypoxia_score > 0.3] <- "high hypoxia"
+
+summary(factor(glioblastoma_scRNAseq_Seurat_Harmony$hypoxia_classification))
+
+glioblastoma_scRNAseq_Seurat_Harmony@meta.data <- glioblastoma_scRNAseq_Seurat_Harmony@meta.data %>% mutate(selected_annotations_hypoxia_class = paste0(selected_annotations,"_", hypoxia_classification))
+
+summary(factor(glioblastoma_scRNAseq_Seurat_Harmony$selected_annotations_hypoxia_class))
+```
+
+```{r, fig.width=18,fig.height=20}
+# tsne of the hypoxia signal
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/hypoxia_classes_tsne.pdf",width = 10, # The width of the plot in inches
+    height = 8) # The height of the plot in inches)
+DimPlot(glioblastoma_scRNAseq_Seurat_Harmony, reduction = "tsne", group.by = "hypoxia_classification", raster = FALSE, pt.size = 0.5, label = FALSE) & scale_color_manual(values = accent_3_hypoxia_classes[c(3,2,1)], labels = c("High hypoxia", "Low hypoxia", "Normoxia")) & ggtitle("") & theme(legend.text = element_text(size = 20), axis.title = element_text(size = 20), axis.text = element_text(size = 16))
+dev.off()
+
+# Dotplot of hypoxia genes
+Idents(glioblastoma_scRNAseq_Seurat_Harmony) <- "selected_annotations_hypoxia_class"
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/hypoxia_genes_DotPlot_per_hypoxia_class_new.pdf", height = 6.8, width = 5.9)
+  DotPlot(glioblastoma_scRNAseq_Seurat_Harmony, features = hypoxia_gene_set[[1]][c(4,3,2,1)], group.by = "selected_annotations_hypoxia_class", scale = TRUE) +
+  scale_colour_gradient2(low = "blue", mid = '#d3d3d3', high = "red") +
+  xlab("") + ylab("") +
+  scale_size(range = c(1, 7)) +
+  #plot_annotation(title = "Gene set activities") #+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), axis.text = element_text(size = 14), plot.title  = element_text(size = 16)) 
+dev.off()
+
+# Barplot of hypoxia states in selected cell groups
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/hypoxia_class_proportions_in_selected cell_types_barplot2.pdf", height = 6, width = 6)
+ggplot(glioblastoma_scRNAseq_Seurat_Harmony@meta.data, aes(selected_annotations, fill = hypoxia_classification)) +
+  geom_bar(stat = "count", position = "fill", color = "black", size = 0.2) +
+  theme_classic() +
+  ggtitle("Hypoxia class proportions in cell types.") +
+  ylab("Hypoxia class proportion") +
+  theme_classic() +
+  xlab("") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  scale_fill_hue(l = 70) +
+ # theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  guides(fill = guide_legend(ncol = 1, title = "")) +
+  theme(axis.title = element_text(size = 14, colour = "black"), title = element_text(size = 16), axis.text = element_text(size = 14, colour = "black"), legend.text = element_text(size = 14), axis.line = element_line(colour = "black")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), minor_breaks = seq(0, 1, 0.05))+
+  scale_fill_manual(values = accent_3_hypoxia_classes[c(3,2,1)], labels = c("High hypoxia", "Low hypoxia", "Normoxia"))#+
+#  scale_x_discrete(labels = c("Cancer cells", expression("Macrophages CD163" ^ "-"),expression("Macrophages CD163" ^ "+"), expression("Microglial cells CD163" ^ "-"), expression("Microglial cells CD163" ^ "+"), "Other cells"))
+dev.off()
+```
+
+
+# Differential gene expression analysis between high hypoxia and normoxia
+```{r}
+#Function that calculates DGE analysis between hypoxia classes in given cell type and saves results in a file and prints plots. The analysis are done 
+
+calculate_DGE_between_hypoxia_classes_in_a_cell_type <- function(cell_type){
+  
+  # Set thresholds
+  adjusted_p_value_treshold <- 0.05
+  absolute_avglog2FC_treshold <- 0.25
+  
+  # Separating the studied data from the data set
+  Idents(glioblastoma_scRNAseq_Seurat_Harmony) <- "selected_annotations"
+  data_set_cell_type <- subset(glioblastoma_scRNAseq_Seurat_Harmony, idents = c(cell_type))
+  
+  # high vs normoxia
+  Idents(data_set_cell_type) <- "hypoxia_classification"
+  cell_type_DGE_high_hypoxia_normoxia <- FindMarkers(
+    data_set_cell_type, test.use = "MAST", ident.1 = "high hypoxia", ident.2 = "normoxia")
+  
+  # Find significant DEGs
+  cell_type_DGE_high_hypoxia_normoxia$differentially_expressed <- FALSE
+  cell_type_DGE_high_hypoxia_normoxia$differentially_expressed[(abs(cell_type_DGE_high_hypoxia_normoxia$avg_log2FC)
+  >= absolute_avglog2FC_treshold) & cell_type_DGE_high_hypoxia_normoxia$p_val_adj
+  <= adjusted_p_value_treshold] <- TRUE
+  
+  # Make volcano plot
+  high_hypoxia_normoxia <- ggplot(cell_type_DGE_high_hypoxia_normoxia, aes(avg_log2FC, y = -log10(p_val_adj), color = differentially_expressed)) +
+    geom_point(size = 0.2) +
+    theme_minimal() +
+    #geom_text(size=1.5) +
+    scale_color_manual(values = c("black", "red"))+
+    labs(title = paste(cell_type,"DE genes in high hypoxia compared to normoxia"))
+  
+  pdf(file =paste("/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/hypoxia_DGE/DGE_high_vs_normoxia_volcano_",cell_type,".pdf",sep = ""),width = 18, # The width of the plot in inches
+    height = 6) # The height of the plot in inches)
+  print(grid.arrange(high_hypoxia_normoxia,nrow=1))
+  dev.off()
+
+  # Format result df
+  cell_type_DGE_high_hypoxia_normoxia$gene <- row.names(cell_type_DGE_high_hypoxia_normoxia)
+  cell_type_DGE_high_hypoxia_normoxia <- cell_type_DGE_high_hypoxia_normoxia[cell_type_DGE_high_hypoxia_normoxia$differentially_expressed == TRUE, c("p_val", "p_val_adj", "avg_log2FC","gene")]
+  colnames(cell_type_DGE_high_hypoxia_normoxia) <- c(paste(cell_type, "_high_hypoxia_normoxia_p_val", sep = ""), paste(cell_type, "_high_hypoxia_normoxia_p_val_adj", sep = ""), paste(cell_type, "_high_hypoxia_normoxia_avg_log2FC", sep = ""), paste(cell_type,"_high_hypoxia_normoxia_gene", sep = ""))
+  
+  if(nrow(cell_type_DGE_high_hypoxia_normoxia > 0)){
+    row.names(cell_type_DGE_high_hypoxia_normoxia) <- c(1:nrow(cell_type_DGE_high_hypoxia_normoxia))
+  }
+
+  
+  return(cell_type_DGE_high_hypoxia_normoxia)
+  
+}
+```
+
+
+```{r}
+# Running DGE analysis for the selected cell types and combining the results in a list.
+list_of_hypoxia_DGE_results <- list(NA)
+for (cell_type in c("MDM CD163+", "MDM CD163-", "MG CD163+", "MG CD163-")) {
+  results <- calculate_DGE_between_hypoxia_classes_in_a_cell_type(cell_type = cell_type)
+  list_of_hypoxia_DGE_results <- append(list_of_hypoxia_DGE_results, list(results))
+}
+
+list_of_hypoxia_DGE_results <- list_of_hypoxia_DGE_results[2:length(list_of_hypoxia_DGE_results)]
+names(list_of_hypoxia_DGE_results) <-  c("MDM CD163+", "MDM CD163-", "MG CD163+", "MG CD163-")
+
+# Save results
+lapply(1:length(list_of_hypoxia_DGE_results), function(i) write_csv(list_of_hypoxia_DGE_results[[i]], file = paste0("/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/DGE_results_high_hypoxia_vs_normoxia_",names(list_of_hypoxia_DGE_results)[i],".csv",sep = "")))
+
+save(list_of_hypoxia_DGE_results, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/list_of_hypoxia_DGE_results.RData")
+```
+
+```{r}
+# Find up and down regulated genes
+load(file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/list_of_hypoxia_DGE_results.RData")
+
+# Making a list that contain up and down regulated genes.
+up_down_dge_genes <- list()
+
+for(i in 1:length(list_of_hypoxia_DGE_results)){
+  # UP regulated
+  up_dge_genes <- list_of_hypoxia_DGE_results[[i]][list_of_hypoxia_DGE_results[[i]][,3] > 0, 4]
+  name_cur <- paste0(names(list_of_hypoxia_DGE_results)[i], "_UP")
+  up_down_dge_genes[[name_cur]] <- up_dge_genes
+  
+  # DOWN regulated
+  down_dge_genes <- list_of_hypoxia_DGE_results[[i]][list_of_hypoxia_DGE_results[[i]][,3] < 0, 4]
+  name_cur <- paste0(names(list_of_hypoxia_DGE_results)[i], "_DOWN")
+  up_down_dge_genes[[name_cur]] <- down_dge_genes
+}
+
+# Save file
+save(up_down_dge_genes, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/High_hypoxia_vs_normoxia_differentially_expressed_genes.RData")
+
+#make data frame with DEGs
+up_down_dge_genes_df <- data.frame(first_column = rep(NA, 465))
+for(i in 1:length(up_down_dge_genes)){
+  genes <- as.character(up_down_dge_genes[[i]])
+  genes_elongated <- c(genes, rep(NA, (465 - length(genes))))
+  up_down_dge_genes_df <- cbind(up_down_dge_genes_df, genes_elongated)
+}
+
+up_down_dge_genes_df <- up_down_dge_genes_df[,-1]
+colnames(up_down_dge_genes_df) <- names(up_down_dge_genes)
+up_down_dge_genes_df[is.na(up_down_dge_genes_df)]<-""
+
+write_csv(up_down_dge_genes_df, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/High_hypoxia_vs_normoxia_differentially_expressed_genes.csv")
+```
+
+## Visualize high hypoxia vs normoxia DEG overlaps between cell types
+```{r}
+## option 2 for colors
+venn_list <- c(up_down_dge_genes[c(1,3,7,5)])
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/hypoxia_DGE/Venn_DGE_high_vs_normoxia_UP_new2.pdf", width = 6, height = 4)
+ggVennDiagram(venn_list,label = "count", label_alpha = 0, set_size = 2) + ggtitle("UP regulated genes\nhigh hypoxia vs normoxia") + scale_fill_gradient(low = "white",high = "#C75792", limits = c(0, 250)) + theme(legend.position = "none") + scale_x_continuous(expand = expansion(mult = .1)) + scale_y_continuous(expand = expansion(mult = .1))
+dev.off()
+
+venn_list <- c(up_down_dge_genes[c(2,4,8,6)])
+pdf(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/hypoxia_DGE/Venn_DGE_high_vs_normoxia_DOWN_new2.pdf", width = 6, height = 4)
+ggVennDiagram(venn_list,label = "count", label_alpha = 0, set_size = 2) + ggtitle("DOWN regulated genes\nhigh hypoxia vs normoxia") + scale_fill_gradient(low = "white",high = "#386CB0", limits = c(0, 140)) + theme(legend.position = "none") + scale_x_continuous(expand = expansion(mult = .1)) + scale_y_continuous(expand = expansion(mult = .1))
+dev.off()
+```
+
+# Differential gene expression analysis between cell types in high hypoxia
+```{r}
+#Running DGE analysis for cell types compared to other myeloid cells in high hypoxia
+
+#Separating the studied data from the data set
+Idents(glioblastoma_scRNAseq_Seurat_Harmony) <- "hypoxia_classification"
+data_set_high_hypoxia <- subset(glioblastoma_scRNAseq_Seurat_Harmony, idents = c("high hypoxia"))
+
+  
+#Running DGE analysis between cell types in high hypoxia using MAST
+cell_types_to_be_studied <- c("MDM CD163+", "MDM CD163-", "MG CD163+", "MG CD163-")
+cell_type_DGE_results_high_hypoxia_list <- list()
+
+for(i in 1:4){
+  data_set_high_hypoxia@meta.data$current_comparison <- data_set_high_hypoxia@meta.data$selected_annotations
+  
+  data_set_high_hypoxia@meta.data$current_comparison[data_set_high_hypoxia@meta.data$selected_annotations %in% cell_types_to_be_studied[-i]] <- "Other myeloid cells"
+  
+  print(summary(factor(data_set_high_hypoxia@meta.data$current_comparison)))
+  
+  Idents(data_set_high_hypoxia) <- "current_comparison"
+  cell_type_DGE_results_high_hypoxia_list[[i]] <- FindMarkers(
+  data_set_high_hypoxia, test.use = "MAST", ident.1 = cell_types_to_be_studied[i], ident.2 = "Other myeloid cells")
+}
+
+# format data
+names(cell_type_DGE_results_high_hypoxia_list) <- cell_types_to_be_studied
+add_gene <- function(df){
+  View(df)
+  df$gene <- row.names(df)
+  return(df)
+}
+
+cell_type_DGE_results_high_hypoxia_list_genes <- lapply(cell_type_DGE_results_high_hypoxia_list, add_gene)
+
+save(cell_type_DGE_results_high_hypoxia_list_genes, file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/hypoxia_DGE/cell_type_DGE_in_high_hypoxia/DGE_results_cell_types_in high_hypoxia.RData")
+
+```
+
+```{r}
+# Find up and down regulated genes
+load(file = "/lustre/compbio/projects/glioma_scRNAseq/Figures/Iina/hypoxia_DGE/cell_type_DGE_in_high_hypoxia/DGE_results_cell_types_in high_hypoxia.RData")
+
+# Making a list that contain up and down regulated genes.
+up_down_dge_genes_cell_type <- list()
+
+for(i in 1:length(cell_type_DGE_results_high_hypoxia_list_genes)){
+  # UP regulated
+  up_dge_genes <- cell_type_DGE_results_high_hypoxia_list_genes[[i]][(cell_type_DGE_results_high_hypoxia_list_genes[[i]][,2] >= 0.25) & (cell_type_DGE_results_high_hypoxia_list_genes[[i]][,5] < 0.05), 6]
+  name_cur <- paste0(names(cell_type_DGE_results_high_hypoxia_list_genes)[i], "_UP")
+  up_down_dge_genes_cell_type[[name_cur]] <- up_dge_genes
+  
+  # DOWN regulated
+  down_dge_genes <- cell_type_DGE_results_high_hypoxia_list_genes[[i]][(cell_type_DGE_results_high_hypoxia_list_genes[[i]][,2] <= -0.25) & (cell_type_DGE_results_high_hypoxia_list_genes[[i]][,5] < 0.05), 6]
+  name_cur <- paste0(names(cell_type_DGE_results_high_hypoxia_list_genes)[i], "_DOWN")
+  up_down_dge_genes_cell_type[[name_cur]] <- down_dge_genes
+}
+
+# Save file
+save(up_down_dge_genes_cell_type, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/cell_type_DGE_in_high_hypoxia/cell_type_vs_other_myeloid_differentially_expressed_genes.RData")
+
+#make data frame with DEGs
+up_down_dge_genes_df <- data.frame(first_column = rep(NA, 664))
+for(i in 1:length(up_down_dge_genes_cell_type)){
+  genes <- as.character(up_down_dge_genes_cell_type[[i]])
+  genes_elongated <- c(genes, rep(NA, (664 - length(genes))))
+  up_down_dge_genes_df <- cbind(up_down_dge_genes_df, genes_elongated)
+}
+
+up_down_dge_genes_df <- up_down_dge_genes_df[,-1]
+colnames(up_down_dge_genes_df) <- names(up_down_dge_genes_cell_type)
+up_down_dge_genes_df[is.na(up_down_dge_genes_df)]<-""
+
+write_csv(up_down_dge_genes_df, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/cell_type_DGE_in_high_hypoxia/cell_type_vs_other_myeloid_differentially_expressed_genes.csv")
+```
+
+# Find cell type unique hypoxia response genes from DEG lists
+```{r}
+#Find overlaps between high hypoxia vs normoxia and myeloid cell type vs others DEGs
+load(file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/cell_type_DGE_in_high_hypoxia/cell_type_vs_other_myeloid_differentially_expressed_genes.RData")
+
+load(file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/High_hypoxia_vs_normoxia_differentially_expressed_genes.RData")
+
+#########################
+# Get overlaps hypoxia UP
+DEG_overlaps_hypoxia_UP <- process_region_data(venn = Venn(up_down_dge_genes[c(1,3,7,5)]))
+
+# Convert 'item' column into named list
+DEG_overlaps_hypoxia_UP_list <- setNames(lapply(DEG_overlaps_hypoxia_UP$item, function(x) unlist(strsplit(x, ",\\s*"))), DEG_overlaps_hypoxia_UP$name)
+
+save(DEG_overlaps_hypoxia_UP_list, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/High_hypoxia_vs_normoxia_differentially_expressed_genes_UP_overlaps_list.RData")
+
+# Convert list to a data frame where genes are stored as a single quoted string
+DEG_overlaps_csv <- data.frame(
+  name = names(DEG_overlaps_hypoxia_UP_list),
+  genes = sapply(DEG_overlaps_hypoxia_UP_list, function(genes) paste0("c(\"", paste(genes, collapse = "\", \""), "\")")),
+  stringsAsFactors = FALSE
+)
+
+# Save as CSV
+write.table(DEG_overlaps_csv, "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/overlaps_high_hypoxia_vs_normoxia_UP_new.tsv", row.names = FALSE, sep = "\t", quote = FALSE)
+
+###########################
+# Get overlaps hypoxia DOWN
+DEG_overlaps_hypoxia_DOWN <- process_region_data(venn = Venn(up_down_dge_genes[c(2,4,8,6)]))
+
+# Convert 'item' column into named list
+DEG_overlaps_hypoxia_DOWN_list <- setNames(lapply(DEG_overlaps_hypoxia_DOWN$item, function(x) unlist(strsplit(x, ",\\s*"))), DEG_overlaps_hypoxia_DOWN$name)
+
+save(DEG_overlaps_hypoxia_DOWN_list, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/High_hypoxia_vs_normoxia_differentially_expressed_genes_DOWN_overlaps_list.RData")
+
+# Convert list to a data frame where genes are stored as a single quoted string
+DEG_overlaps_csv <- data.frame(
+  name = names(DEG_overlaps_hypoxia_DOWN_list),
+  genes = sapply(DEG_overlaps_hypoxia_DOWN_list, function(genes) paste0("c(\"", paste(genes, collapse = "\", \""), "\")")),
+  stringsAsFactors = FALSE
+)
+
+# Save as CSV
+write.table(DEG_overlaps_csv, "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/overlaps_high_hypoxia_vs_normoxia_DOWN_new.tsv", row.names = FALSE, sep = "\t", quote = FALSE)
+
+
+##########################
+# Get overlaps cell type DEGs UP
+DEG_overlaps_cell_type_UP <- process_region_data(venn = Venn(up_down_dge_genes_cell_type[c(1,3,7,5)]))
+
+# Convert 'item' column into named list
+DEG_overlaps_cell_type_UP_list <- setNames(lapply(DEG_overlaps_cell_type_UP$item, function(x) unlist(strsplit(x, ",\\s*"))), DEG_overlaps_cell_type_UP$name)
+
+save(DEG_overlaps_cell_type_UP_list, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/cell_type_DGE_in_high_hypoxia/cell_type_vs_other_myeloid_differentially_expressed_genes_UP_overlaps_list.RData")
+
+# Convert list to a data frame where genes are stored as a single quoted string
+DEG_overlaps_csv <- data.frame(
+  name = names(DEG_overlaps_cell_type_UP_list),
+  genes = sapply(DEG_overlaps_cell_type_UP_list, function(genes) paste0("c(\"", paste(genes, collapse = "\", \""), "\")")),
+  stringsAsFactors = FALSE
+)
+
+# Save as CSV
+write.table(DEG_overlaps_csv, "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/cell_type_DGE_in_high_hypoxia/cell_type_vs_other_myeloid_UP_new.tsv", row.names = FALSE, sep = "\t", quote = FALSE)
+
+
+##########################
+# Get overlaps cell type DEGs DOWN
+DEG_overlaps_cell_type_DOWN <- process_region_data(venn = Venn(up_down_dge_genes_cell_type[c(2,4,8,6)]))
+
+# Convert 'item' column into named list
+DEG_overlaps_cell_type_DOWN_list <- setNames(lapply(DEG_overlaps_cell_type_DOWN$item, function(x) unlist(strsplit(x, ",\\s*"))), DEG_overlaps_cell_type_DOWN$name)
+
+save(DEG_overlaps_cell_type_DOWN_list, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/cell_type_DGE_in_high_hypoxia/cell_type_vs_other_myeloid_differentially_expressed_genes_DOWN_overlaps_list.RData")
+
+# Convert list to a data frame where genes are stored as a single quoted string
+DEG_overlaps_csv <- data.frame(
+  name = names(DEG_overlaps_cell_type_DOWN_list),
+  genes = sapply(DEG_overlaps_cell_type_DOWN_list, function(genes) paste0("c(\"", paste(genes, collapse = "\", \""), "\")")),
+  stringsAsFactors = FALSE
+)
+
+# Save as CSV
+write.table(DEG_overlaps_csv, "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/cell_type_DGE_in_high_hypoxia/cell_type_vs_other_myeloid_DOWN_new.tsv", row.names = FALSE, sep = "\t", quote = FALSE)
+```
+
+```{r}
+# Collect DEGs to compare to find cell type unique hypoxia DEGs
+
+# MDM CD163+
+
+cell_type_unique_DEGs_from_both_DGE_analysis_MDM_CD163pos <- c(DEG_overlaps_hypoxia_UP_list[1], DEG_overlaps_hypoxia_DOWN_list[1], DEG_overlaps_cell_type_UP_list[1], DEG_overlaps_cell_type_DOWN_list[1])
+names(cell_type_unique_DEGs_from_both_DGE_analysis_MDM_CD163pos) <- c(paste(names(cell_type_unique_DEGs_from_both_DGE_analysis_MDM_CD163pos)[1:2], "_high_hypoxia_vs_normoxia"), paste(names(cell_type_unique_DEGs_from_both_DGE_analysis_MDM_CD163pos)[3:4], "_cell_type_vs_other_myeloid"))
+
+# Get overlaps
+DEG_overlaps <- process_region_data(venn = Venn(cell_type_unique_DEGs_from_both_DGE_analysis_MDM_CD163pos))
+
+# Convert 'item' column into named list
+DEG_overlaps_list_MDM_CD163pos <- setNames(lapply(DEG_overlaps$item, function(x) unlist(strsplit(x, ",\\s*"))), DEG_overlaps$name)
+save(DEG_overlaps_list_MDM_CD163pos, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/Overlaps_between_cell_type_and_hypoxia_DEGs/cell_type_unique_hypoxia_genes_overlaps_list_MDM_163pos.RData")
+
+# Convert list to a data frame where genes are stored as a single quoted string
+DEG_overlaps_csv <- data.frame(
+  name = names(DEG_overlaps_list_MDM_CD163pos),
+  genes = sapply(DEG_overlaps_list_MDM_CD163pos, function(genes) paste0("c(\"", paste(genes, collapse = "\", \""), "\")")),
+  stringsAsFactors = FALSE
+)
+
+# Save as CSV
+write.table(DEG_overlaps_csv, "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/Overlaps_between_cell_type_and_hypoxia_DEGs/cell_type_unique_hypoxia_genes_overlaps_list_MDM_163pos.tsv", row.names = FALSE, sep = "\t", quote = FALSE)
+######################
+
+# MDM CD163-
+
+cell_type_unique_DEGs_from_both_DGE_analysis_MDM_CD163neg <- c(DEG_overlaps_hypoxia_UP_list[2], DEG_overlaps_hypoxia_DOWN_list[2], DEG_overlaps_cell_type_UP_list[2], DEG_overlaps_cell_type_DOWN_list[2])
+names(cell_type_unique_DEGs_from_both_DGE_analysis_MDM_CD163neg) <- c(paste(names(cell_type_unique_DEGs_from_both_DGE_analysis_MDM_CD163neg)[1:2], "_high_hypoxia_vs_normoxia"), paste(names(cell_type_unique_DEGs_from_both_DGE_analysis_MDM_CD163neg)[3:4], "_cell_type_vs_other_myeloid"))
+
+# Get overlaps
+DEG_overlaps <- process_region_data(venn = Venn(cell_type_unique_DEGs_from_both_DGE_analysis_MDM_CD163neg))
+
+# Convert 'item' column into named list
+DEG_overlaps_list_MDM_CD163neg <- setNames(lapply(DEG_overlaps$item, function(x) unlist(strsplit(x, ",\\s*"))), DEG_overlaps$name)
+save(DEG_overlaps_list_MDM_CD163neg, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/Overlaps_between_cell_type_and_hypoxia_DEGs/cell_type_unique_hypoxia_genes_overlaps_list_MDM_163neg.RData")
+
+# Convert list to a data frame where genes are stored as a single quoted string
+DEG_overlaps_csv <- data.frame(
+  name = names(DEG_overlaps_list_MDM_CD163neg),
+  genes = sapply(DEG_overlaps_list_MDM_CD163neg, function(genes) paste0("c(\"", paste(genes, collapse = "\", \""), "\")")),
+  stringsAsFactors = FALSE
+)
+
+# Save as CSV
+write.table(DEG_overlaps_csv, "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/Overlaps_between_cell_type_and_hypoxia_DEGs/cell_type_unique_hypoxia_genes_overlaps_list_MDM_163neg.tsv", row.names = FALSE, sep = "\t", quote = FALSE)
+#####################
+
+# MG CD163+
+cell_type_unique_DEGs_from_both_DGE_analysis_MG_CD163pos <- c(DEG_overlaps_hypoxia_UP_list[4], DEG_overlaps_hypoxia_DOWN_list[4], DEG_overlaps_cell_type_UP_list[4], DEG_overlaps_cell_type_DOWN_list[4])
+names(cell_type_unique_DEGs_from_both_DGE_analysis_MG_CD163pos) <- c(paste(names(cell_type_unique_DEGs_from_both_DGE_analysis_MG_CD163pos)[1:2], "_high_hypoxia_vs_normoxia"), paste(names(cell_type_unique_DEGs_from_both_DGE_analysis_MG_CD163pos)[3:4], "_cell_type_vs_other_myeloid"))
+
+# Get overlaps
+DEG_overlaps <- process_region_data(venn = Venn(cell_type_unique_DEGs_from_both_DGE_analysis_MG_CD163pos))
+
+# Convert 'item' column into named list
+DEG_overlaps_list_MG_CD163pos <- setNames(lapply(DEG_overlaps$item, function(x) unlist(strsplit(x, ",\\s*"))), DEG_overlaps$name)
+save(DEG_overlaps_list_MG_CD163pos, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/Overlaps_between_cell_type_and_hypoxia_DEGs/cell_type_unique_hypoxia_genes_overlaps_list_MG_163pos.RData")
+
+# Convert list to a data frame where genes are stored as a single quoted string
+DEG_overlaps_csv <- data.frame(
+  name = names(DEG_overlaps_list_MG_CD163pos),
+  genes = sapply(DEG_overlaps_list_MG_CD163pos, function(genes) paste0("c(\"", paste(genes, collapse = "\", \""), "\")")),
+  stringsAsFactors = FALSE
+)
+
+# Save as CSV
+write.table(DEG_overlaps_csv, "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/Overlaps_between_cell_type_and_hypoxia_DEGs/cell_type_unique_hypoxia_genes_overlaps_list_MG_163pos.tsv", row.names = FALSE, sep = "\t", quote = FALSE)
+######################
+
+# MG CD163-
+cell_type_unique_DEGs_from_both_DGE_analysis_MG_CD163neg <- c(DEG_overlaps_hypoxia_UP_list[3], DEG_overlaps_hypoxia_DOWN_list[3], DEG_overlaps_cell_type_UP_list[3], DEG_overlaps_cell_type_DOWN_list[3])
+names(cell_type_unique_DEGs_from_both_DGE_analysis_MG_CD163neg) <- c(paste(names(cell_type_unique_DEGs_from_both_DGE_analysis_MG_CD163neg)[1:2], "_high_hypoxia_vs_normoxia"), paste(names(cell_type_unique_DEGs_from_both_DGE_analysis_MG_CD163neg)[3:4], "_cell_type_vs_other_myeloid"))
+
+# Get overlaps
+DEG_overlaps <- process_region_data(venn = Venn(cell_type_unique_DEGs_from_both_DGE_analysis_MG_CD163neg))
+
+# Convert 'item' column into named list
+DEG_overlaps_list_MG_CD163neg <- setNames(lapply(DEG_overlaps$item, function(x) unlist(strsplit(x, ",\\s*"))), DEG_overlaps$name)
+save(DEG_overlaps_list_MG_CD163neg, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/Overlaps_between_cell_type_and_hypoxia_DEGs/cell_type_unique_hypoxia_genes_overlaps_list_MG_163neg.RData")
+
+# Convert list to a data frame where genes are stored as a single quoted string
+DEG_overlaps_csv <- data.frame(
+  name = names(DEG_overlaps_list_MG_CD163neg),
+  genes = sapply(DEG_overlaps_list_MG_CD163neg, function(genes) paste0("c(\"", paste(genes, collapse = "\", \""), "\")")),
+  stringsAsFactors = FALSE
+)
+
+# Save as CSV
+write.table(DEG_overlaps_csv, "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/Overlaps_between_cell_type_and_hypoxia_DEGs/cell_type_unique_hypoxia_genes_overlaps_list_MG_163neg.tsv", row.names = FALSE, sep = "\t", quote = FALSE)
+##################
+
+# Combine lists
+cell_type_unique_hypoxia_response_genes_final_list <- c(DEG_overlaps_list_MDM_CD163pos[c(6, 9)], DEG_overlaps_list_MDM_CD163neg[c(6, 9)], DEG_overlaps_list_MG_CD163pos[c(6, 9)], DEG_overlaps_list_MG_CD163neg[c(6, 9)])
+
+save(cell_type_unique_hypoxia_response_genes_final_list, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/Overlaps_between_cell_type_and_hypoxia_DEGs/cell_type_unique_hypoxia_response_genes_final_list.RData")
+
+# Convert list to a data frame where genes are stored as a single quoted string
+DEG_overlaps_csv <- data.frame(
+  name = names(cell_type_unique_hypoxia_response_genes_final_list),
+  genes = sapply(cell_type_unique_hypoxia_response_genes_final_list, function(genes) paste0("c(\"", paste(genes, collapse = "\", \""), "\")")),
+  stringsAsFactors = FALSE
+)
+
+# Save as CSV
+write.table(DEG_overlaps_csv, "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/Overlaps_between_cell_type_and_hypoxia_DEGs/cell_type_unique_hypoxia_response_genes_final_list.tsv", row.names = FALSE, sep = "\t", quote = FALSE)
+
+#Convert into df where each signature is in column
+cell_type_unique_hypoxia_response_genes_final_df <- data.frame(first_column = rep(NA, 84))
+for(i in 1:length(cell_type_unique_hypoxia_response_genes_final_list)){
+  genes <- as.character(cell_type_unique_hypoxia_response_genes_final_list[[i]])
+  genes_elongated <- c(genes, rep(NA, (84 - length(genes))))
+  cell_type_unique_hypoxia_response_genes_final_df <- cbind(cell_type_unique_hypoxia_response_genes_final_df, genes_elongated)
+}
+
+cell_type_unique_hypoxia_response_genes_final_df <- cell_type_unique_hypoxia_response_genes_final_df[,-1]
+colnames(cell_type_unique_hypoxia_response_genes_final_df) <- names(cell_type_unique_hypoxia_response_genes_final_list)
+cell_type_unique_hypoxia_response_genes_final_df[is.na(cell_type_unique_hypoxia_response_genes_final_df)]<-""
+
+write_csv(cell_type_unique_hypoxia_response_genes_final_df, file = "/lustre/compbio/projects/glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/Overlaps_between_cell_type_and_hypoxia_DEGs/cell_type_unique_hypoxia_response_genes_final_list.csv")
+```
+
+# Gene set activity analysis
+```{r}
+# load gene set excel
+gene_sets_df <- read_excel("/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/gene_sets/Gene_sets_for_Kevin_updated20112025.xlsx")
+gene_sets_list <- as.list(gene_sets_df)
+gene_sets_list <- lapply(gene_sets_list, function(x) x[!is.na(x)])
+```
+
+```{r}
+# Run gene set activity analysis
+list_members <- c(10, 20, 23, 11, 40, 1, 6, 21, 41) # choose gene sets to calculate
+
+glioblastoma_scRNAseq_Seurat_Harmony <- AddModuleScore(
+  glioblastoma_scRNAseq_Seurat_Harmony,features = gene_sets_list[list_members], search = TRUE )
+
+
+colnames(glioblastoma_scRNAseq_Seurat_Harmony@meta.data) <- c(colnames(glioblastoma_scRNAseq_Seurat_Harmony@meta.data)[1:(length(colnames(glioblastoma_scRNAseq_Seurat_Harmony@meta.data)) - length(gene_sets_list[list_members]))], names(gene_sets_list[list_members]))
+```
+
+```{r}
+#Dotplot visualizations of gene set activities in selected cell groups
+Idents(glioblastoma_scRNAseq_Seurat_Harmony) <- "selected_annotations_hypoxia_class"
+
+pdf(file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/Figures/Iina/manu_geneSets_genes_DotPlot_per_hypoxia_class_new2.pdf", height = 13, width = 7.1)
+  DotPlot(glioblastoma_scRNAseq_Seurat_Harmony, features = names(gene_sets_list)[list_members], group.by = "selected_annotations_hypoxia_class", scale = TRUE) +
+  scale_colour_gradient2(low = "blue", mid = '#d3d3d3', high = "red") +
+  xlab("") + ylab("") +
+  scale_size(range = c(1, 7)) +
+  #plot_annotation(title = "Gene set activities") #+
+#  coord_flip()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), axis.text = element_text(size = 14), plot.title  = element_text(size = 16)) 
+dev.off()
+```
+
+## Statistical analysis for gene set activities
+```{r}
+# Load required libraries
+library(Seurat)
+library(rcompanion)  # For cliffDelta function
+library(ggplot2)     # For plotting
+library(dplyr)       # For data manipulation
+library(tidyr)       # For data reshaping
+library(purrr)       # For functional programming
+
+#-----------------------------------------
+# 1. Set up: Calculate Cliff's Delta function for within-cell-type comparisons
+#-----------------------------------------
+
+# Function to calculate Cliff's Delta for hypoxia groups within each cell type
+calculate_cliff_delta_within_celltypes <- function(seurat_obj, 
+                                                score_cols, 
+                                                celltype_col = "selected_annotations",
+                                                hypoxia_col = "hypoxia_classification") {
+  
+  # Extract metadata
+  meta_data <- seurat_obj@meta.data
+  
+  # Get all unique cell types
+  cell_types <- unique(meta_data[[celltype_col]])
+  
+  # Initialize results list
+  results <- list()
+  
+  # For each cell type
+  for (cell_type in cell_types) {
+    # Filter metadata for this cell type
+    cell_type_meta <- meta_data[meta_data[[celltype_col]] == cell_type, ]
+    
+    # Get all hypoxia groups present in this cell type
+    hypoxia_groups <- unique(cell_type_meta[[hypoxia_col]])
+    
+    # Only proceed if there are at least 2 hypoxia groups to compare
+    if (length(hypoxia_groups) >= 2) {
+      # Get all possible pairs of hypoxia groups
+      group_pairs <- combn(hypoxia_groups, 2, simplify = FALSE)
+      
+      # For each gene set score
+      for (score in score_cols) {
+       # score_results <- data.frame()
+        score_results <- as.data.frame(Matrix(NA, ncol = 11))
+        colnames(score_results) <- c("gene_set_name", "cell_type", "group1", "group2", "cliff_delta", "conf_low", "conf_high", "magnitude", "n_group1", "n_group2", "wilcoxon_pvalue")
+        
+        # For each pair of hypoxia groups
+        for (pair in group_pairs) {
+          group1 <- pair[1]
+          group2 <- pair[2]
+          
+          # Extract scores for each hypoxia group within this cell type
+          scores_group1 <- cell_type_meta[cell_type_meta[[hypoxia_col]] == group1, score]
+          scores_group2 <- cell_type_meta[cell_type_meta[[hypoxia_col]] == group2, score]
+          
+          # Skip if either group has too few cells
+          if (length(scores_group1) < 3 || length(scores_group2) < 3) {
+            message(paste("Skipping comparison for", cell_type, ":", group1, "vs", group2, 
+                         "- insufficient data points"))
+            next
+          }
+          
+          # Calculate Cliff's Delta
+          cd_result <- tryCatch({
+            cd <- cliffDelta(x = scores_group1, 
+                           y = scores_group2,
+                           ci = TRUE,       # Calculate confidence interval
+                           conf = 0.95,     # 95% confidence interval
+                           digits = 3)      # Round to 3 decimal places
+            cd
+          }, error = function(e) {
+            message(paste("Error calculating Cliff's Delta for", score, "in", cell_type, 
+                         "between", group1, "and", group2, ":", e$message))
+            return(NA)
+          })
+          
+          #calculate wilcoxon adjusted p value
+          wilcoxon_res <- wilcox.test(scores_group1, scores_group2)
+          
+          
+          
+          View(cd_result)
+          # If calculation was successful, add to results
+          if (!is.na(cd_result)[1]) {
+            result_row <- data.frame(
+              gene_set_name = score,
+              cell_type = cell_type,
+              group1 = group1,
+              group2 = group2,
+              cliff_delta = cd_result$Cliff.delta[1],
+              conf_low = cd_result$lower.ci[1],
+              conf_high = cd_result$upper.ci[1],
+              magnitude = NA,
+              n_group1 = length(scores_group1),
+              n_group2 = length(scores_group2),
+              wilcoxon_pvalue = wilcoxon_res$p.value
+            )
+            
+            View(result_row)
+            score_results <- rbind(score_results, result_row)
+          }
+        }
+        
+        # Add to overall results
+        if (nrow(score_results) > 0) {
+          if (is.null(results[[score]])) {
+            results[[score]] <- score_results
+          } else {
+            results[[score]] <- rbind(results[[score]], score_results)
+          }
+        }
+      }
+    } else {
+      message(paste("Skipping cell type", cell_type, "- fewer than 2 hypoxia groups"))
+    }
+  }
+  
+  # Combine all results
+  if (length(results) > 0) {
+    all_results <- do.call(rbind, results)
+    rownames(all_results) <- NULL
+    return(all_results)
+  } else {
+    return(data.frame())
+  }
+}
+
+#-----------------------------------------
+# 2. Calculate effect sizes
+#-----------------------------------------
+
+# Specify which gene set scores to analyze (you can expand this list)
+gene_set_scores <- names(gene_sets_list)[41]
+
+results_list <- list()
+# Calculate Cliff's Delta for hypoxia groups within each cell type
+effect_sizes <- calculate_cliff_delta_within_celltypes(
+  seurat_obj = glioblastoma_scRNAseq_Seurat_Harmony,
+  score_cols = gene_set_scores,
+  celltype_col = "selected_annotations",
+  hypoxia_col = "hypoxia_classification"
+)
+
+
+effect_sizes_no_NA <- effect_sizes[!is.na(effect_sizes$gene_set_name),]
+effect_sizes <- effect_sizes_no_NA
+
+
+
+# Create a unique comparison label that includes cell type
+effect_sizes$comparison <- paste(effect_sizes$cell_type, ":", 
+                               effect_sizes$group1, "vs", 
+                               effect_sizes$group2)
+
+save(effect_sizes, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/gene_sets/effect_sizes_cliff_delta_JacksonMDSC.RData")
+
+effect_sizes$p_adjusted_BH <-  p.adjust(effect_sizes$wilcoxon_pvalue, method = "BH")
+
+
+#-----------------------------------------
+# 3. Visualize the results
+#-----------------------------------------
+
+effect_sizes$significance <- ""
+effect_sizes$significance[effect_sizes$p_adjusted_BH < 0.05] <- "*"
+effect_sizes$significance[effect_sizes$p_adjusted_BH < 0.01] <- "**"
+effect_sizes$significance[effect_sizes$p_adjusted_BH < 0.001] <- "***"
+
+# Plot bar chart of effect sizes
+pdf(file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/Figures/Iina/effect_sizes_cliff_delta_JacksonMDSC.pdf", height = 8, width = 8)
+ggplot(effect_sizes, aes(x = comparison, y = cliff_delta, fill = cell_type)) +
+  geom_hline(yintercept = c(0.2,-0.2, 0.4, -0.4), linetype= "dashed", color= "darkgrey")+
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_errorbar(aes(ymin = conf_low, ymax = conf_high), 
+              width = 0.2, position = position_dodge(0.9)) +
+  geom_text(aes(label = significance, y = ifelse(cliff_delta >= 0, 
+                                               cliff_delta + 0.1, 
+                                               cliff_delta - 0.1)), 
+           position = position_dodge(0.9), size = 4) +
+  facet_wrap(~gene_set_name, scales = "free_y", ncol = 8) +  # Separate plot for each gene set
+ # scale_fill_manual(values = c("negligible" = "gray80", 
+  #                          "small" = "lightblue", 
+  #                          "medium" = "royalblue", 
+  #                          "large" = "darkblue")) +
+  labs(title = "Cliff's Delta Effect Sizes for Gene Set Scores Within Cell Types",
+    subtitle = "* p<0.05, ** p<0.01, *** p<0.001 (BH-adjusted Wilcoxon)",
+     x = "",
+     y = "Cliff's Delta")+
+#     fill = "Effect Magnitude") +
+  theme_minimal() +
+  scale_y_continuous(breaks= c(-0.4,-0.2,0,0.2,0.4), minor_breaks = c())+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  dev.off()
+
+#Cliff's delta effect sizes:
+#|d| < 0.147: negligible effect
+#0.147 ≤ |d| < 0.33: small effect
+#0.33 ≤ |d| < 0.474: medium effect
+#|d| ≥ 0.474: large effect
+
+save(effect_sizes, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/gene_sets/effect_sizes_cliff_delta_JacksonMDSC.RData")
+write.csv(effect_sizes, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/gene_sets/effect_sizes_cliff_delta_JacksonMDSC.csv")
+
+```
+
+# Statistical analysis of gene expression differences of single genes
+```{r}
+# Load required libraries
+library(Seurat)
+library(rcompanion)  # For cliffDelta function
+library(ggplot2)     # For plotting
+library(dplyr)       # For data manipulation
+library(tidyr)       # For data reshaping
+library(purrr)       # For functional programming
+
+#-----------------------------------------
+# 1. Set up: Calculate Cliff's Delta function for within-cell-type comparisons
+#-----------------------------------------
+
+# Function to calculate Cliff's Delta for hypoxia groups within each cell type
+# Now works with individual genes instead of gene set scores
+calculate_cliff_delta_genes_within_celltypes <- function(seurat_obj, 
+                                                         gene_vector, 
+                                                         celltype_col = "selected_annotations",
+                                                         hypoxia_col = "hypoxia_classification",
+                                                         assay = "RNA",
+                                                         slot = "data") {
+  
+  # Extract metadata
+  meta_data <- seurat_obj@meta.data
+  
+  # Get all unique cell types
+  cell_types <- unique(meta_data[[celltype_col]])
+  
+  # Check which genes are present in the Seurat object
+  available_genes <- rownames(seurat_obj[[assay]])
+  genes_to_analyze <- intersect(gene_vector, available_genes)
+  missing_genes <- setdiff(gene_vector, available_genes)
+  
+  if (length(missing_genes) > 0) {
+    message(paste("Warning: The following genes were not found in the Seurat object:", 
+                  paste(missing_genes, collapse = ", ")))
+  }
+  
+  if (length(genes_to_analyze) == 0) {
+    stop("None of the specified genes were found in the Seurat object")
+  }
+  
+  message(paste("Analyzing", length(genes_to_analyze), "genes:", 
+                paste(genes_to_analyze, collapse = ", ")))
+  
+  # Initialize results list
+  results <- list()
+  
+  # For each cell type
+  for (cell_type in cell_types) {
+    # Get cell barcodes for this cell type
+    cell_barcodes <- rownames(meta_data[meta_data[[celltype_col]] == cell_type, ])
+    
+    # Filter metadata for this cell type
+    cell_type_meta <- meta_data[cell_barcodes, ]
+    
+    # Get all hypoxia groups present in this cell type
+    hypoxia_groups <- unique(cell_type_meta[[hypoxia_col]])
+    
+    # Only proceed if there are at least 2 hypoxia groups to compare
+    if (length(hypoxia_groups) >= 2) {
+      # Get all possible pairs of hypoxia groups
+      group_pairs <- combn(hypoxia_groups, 2, simplify = FALSE)
+      
+      # For each gene
+      for (gene in genes_to_analyze) {
+        gene_results <- data.frame()
+        
+        # Extract expression data for this gene
+        gene_expression <- GetAssayData(seurat_obj, 
+                                       assay = assay, 
+                                       slot = slot)[gene, cell_barcodes]
+        
+        # Add to metadata
+        cell_type_meta$gene_expr <- gene_expression
+        
+        # For each pair of hypoxia groups
+        for (pair in group_pairs) {
+          group1 <- pair[1]
+          group2 <- pair[2]
+          
+          # Extract expression for each hypoxia group within this cell type
+          expr_group1 <- cell_type_meta[cell_type_meta[[hypoxia_col]] == group1, "gene_expr"]
+          expr_group2 <- cell_type_meta[cell_type_meta[[hypoxia_col]] == group2, "gene_expr"]
+          
+          # Skip if either group has too few cells
+          if (length(expr_group1) < 3 || length(expr_group2) < 3) {
+            message(paste("Skipping comparison for", cell_type, ":", group1, "vs", group2, 
+                         "- insufficient data points"))
+            next
+          }
+          
+          # Calculate Cliff's Delta
+          cd_result <- tryCatch({
+            cd <- cliffDelta(x = expr_group1, 
+                           y = expr_group2,
+                           ci = TRUE,       # Calculate confidence interval
+                           conf = 0.95,     # 95% confidence interval
+                           digits = 3)      # Round to 3 decimal places
+            cd
+          }, error = function(e) {
+            message(paste("Error calculating Cliff's Delta for", gene, "in", cell_type, 
+                         "between", group1, "and", group2, ":", e$message))
+            return(NA)
+          })
+          
+          # Calculate Wilcoxon test p-value
+          wilcoxon_res <- tryCatch({
+            wilcox.test(expr_group1, expr_group2)
+          }, error = function(e) {
+            message(paste("Error in Wilcoxon test for", gene, "in", cell_type, ":", e$message))
+            return(list(p.value = NA))
+          })
+          
+          # If calculation was successful, add to results
+          if (!is.na(cd_result)[1]) {
+            result_row <- data.frame(
+              gene = gene,
+              cell_type = cell_type,
+              group1 = group1,
+              group2 = group2,
+              cliff_delta = cd_result$Cliff.delta[1],
+              conf_low = cd_result$lower.ci[1],
+              conf_high = cd_result$upper.ci[1],
+              magnitude = NA,
+              n_group1 = length(expr_group1),
+              n_group2 = length(expr_group2),
+              mean_expr_group1 = mean(expr_group1),
+              mean_expr_group2 = mean(expr_group2),
+              wilcoxon_pvalue = wilcoxon_res$p.value,
+              stringsAsFactors = FALSE
+            )
+            
+            gene_results <- rbind(gene_results, result_row)
+          }
+        }
+        
+        # Add to overall results
+        if (nrow(gene_results) > 0) {
+          if (is.null(results[[gene]])) {
+            results[[gene]] <- gene_results
+          } else {
+            results[[gene]] <- rbind(results[[gene]], gene_results)
+          }
+        }
+      }
+    } else {
+      message(paste("Skipping cell type", cell_type, "- fewer than 2 hypoxia groups"))
+    }
+  }
+  
+  # Combine all results
+  if (length(results) > 0) {
+    all_results <- do.call(rbind, results)
+    rownames(all_results) <- NULL
+    return(all_results)
+  } else {
+    return(data.frame())
+  }
+}
+
+#-----------------------------------------
+# 2. Calculate effect sizes
+#-----------------------------------------
+
+# Define genes to analyze
+gene_vector <- c("TNF", "TNFRSF1A", "TNFRSF1B")  # Note: Seurat typically uses uppercase
+
+# Calculate Cliff's Delta for gene expression within each cell type
+effect_sizes <- calculate_cliff_delta_genes_within_celltypes(
+  seurat_obj = glioblastoma_scRNAseq_Seurat_Harmony,
+  gene_vector = gene_vector,
+  celltype_col = "selected_annotations",
+  hypoxia_col = "hypoxia_classification",
+  assay = "RNA",
+  slot = "data"  # Use "data" for normalized, "counts" for raw counts
+)
+
+# Create a unique comparison label that includes cell type
+effect_sizes$comparison <- paste(effect_sizes$cell_type, ":", 
+                                effect_sizes$group1, "vs", 
+                                effect_sizes$group2)
+
+# Apply multiple testing correction
+effect_sizes$p_adjusted_BH <- p.adjust(effect_sizes$wilcoxon_pvalue, method = "BH")
+
+# Save results
+save(effect_sizes, file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/gene_expression/effect_sizes_cliff_delta_TNF_genes.RData")
+
+#-----------------------------------------
+# 3. Visualize the results
+#-----------------------------------------
+
+# Add significance labels
+effect_sizes$significance <- ""
+effect_sizes$significance[effect_sizes$p_adjusted_BH < 0.05] <- "*"
+effect_sizes$significance[effect_sizes$p_adjusted_BH < 0.01] <- "**"
+effect_sizes$significance[effect_sizes$p_adjusted_BH < 0.001] <- "***"
+
+# Plot bar chart of effect sizes
+pdf(file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/Figures/Iina/effect_sizes_cliff_delta_TNF_genes.pdf", 
+    height = 8, width = 20)
+ggplot(effect_sizes, aes(x = comparison, y = cliff_delta, fill = cell_type)) +
+  geom_hline(yintercept = c(0.2, -0.2, 0.4, -0.4), linetype = "dashed", color = "darkgrey") +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_errorbar(aes(ymin = conf_low, ymax = conf_high), 
+                width = 0.2, position = position_dodge(0.9)) +
+  geom_text(aes(label = significance, 
+                y = ifelse(cliff_delta >= 0, conf_high + 0.05, conf_low - 0.05)), 
+            position = position_dodge(0.9), size = 4) +
+  facet_wrap(~gene, scales = "free_y", ncol = 3) +
+  labs(title = "Cliff's Delta Effect Sizes for Gene Expression Within Cell Types",
+       subtitle = "* p<0.05, ** p<0.01, *** p<0.001 (BH-adjusted Wilcoxon)\nDashed lines: |d|=0.2 (small), |d|=0.4 (medium)",
+       x = "",
+       y = "Cliff's Delta",
+       fill = "Cell Type") +
+  theme_minimal() +
+  scale_y_continuous(breaks = c(-0.4, -0.2, 0, 0.2, 0.4), minor_breaks = c()) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        legend.position = "bottom")
+dev.off()
+
+# Save CSV
+write.csv(effect_sizes, 
+          file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/gene_expression/effect_sizes_cliff_delta_TNF_genes.csv",
+          row.names = FALSE)
+
+# Print summary
+message("\n=== Analysis Summary ===")
+message(paste("Total comparisons:", nrow(effect_sizes)))
+message(paste("Significant comparisons (p < 0.05):", sum(effect_sizes$p_adjusted_BH < 0.05, na.rm = TRUE)))
+message(paste("Large effects (|d| >= 0.474):", sum(abs(effect_sizes$cliff_delta) >= 0.474, na.rm = TRUE)))
+
+# Cliff's delta effect sizes:
+# |d| < 0.147: negligible effect
+# 0.147 ≤ |d| < 0.33: small effect
+# 0.33 ≤ |d| < 0.474: medium effect
+# |d| ≥ 0.474: large effect
+```
+
+# Defining state for each cancer cell
+```{r}
+#Subsetting the data for cancer cell analysis
+Idents(glioblastoma_scRNAseq_Seurat_Harmony)<-"infercnv.annotation"
+
+#Subsetting the cancer cells
+glioblastoma_scRNAseq_Seurat_Harmony_cancer_cells<-subset(glioblastoma_scRNAseq_Seurat_Harmony, idents = c("CNV"))
+```
+
+```{r}
+#Importing the gene sets
+Neftel_meta_module_gene_list <- read_excel("/lustre/compbio/projects/glioma_scRNAseq/data/gene_sets/Neftel_meta_module_gene_list.xlsx", 
+    skip = 3)
+
+Neftel_cellular_subtypes_gene_set_list <- as.list(Neftel_meta_module_gene_list)
+
+Neftel_cellular_subtypes_gene_set_list$MES2 <- Neftel_cellular_subtypes_gene_set_list$MES2[!is.na(Neftel_cellular_subtypes_gene_set_list$MES2)]
+
+Neftel_cellular_subtypes_gene_set_list$MES1 <- Neftel_cellular_subtypes_gene_set_list$MES1[!is.na(Neftel_cellular_subtypes_gene_set_list$MES1)]
+
+Neftel_cellular_subtypes_gene_set_list$AC <- Neftel_cellular_subtypes_gene_set_list$AC[!is.na(Neftel_cellular_subtypes_gene_set_list$AC)]
+
+Neftel_cellular_subtypes_gene_set_list$OPC <- Neftel_cellular_subtypes_gene_set_list$OPC[!is.na(Neftel_cellular_subtypes_gene_set_list$OPC)]
+
+Neftel_cellular_subtypes_gene_set_list$NPC1 <- Neftel_cellular_subtypes_gene_set_list$NPC1[!is.na(Neftel_cellular_subtypes_gene_set_list$NPC1)]
+
+Neftel_cellular_subtypes_gene_set_list$NPC2 <- Neftel_cellular_subtypes_gene_set_list$NPC2[!is.na(Neftel_cellular_subtypes_gene_set_list$NPC2)]
+
+Neftel_cellular_subtypes_gene_set_list$`G1/S` <- Neftel_cellular_subtypes_gene_set_list$`G1/S`[!is.na(Neftel_cellular_subtypes_gene_set_list$`G1/S`)]
+
+Neftel_cellular_subtypes_gene_set_list$`G2/M` <- Neftel_cellular_subtypes_gene_set_list$`G2/M`[!is.na(Neftel_cellular_subtypes_gene_set_list$`G2/M`)]
+```
+
+```{r}
+#Counting each cell scores for each gene set
+glioblastoma_scRNAseq_Seurat_Harmony_cancer_cells <- AddModuleScore(glioblastoma_scRNAseq_Seurat_Harmony_cancer_cells,features = Neftel_cellular_subtypes_gene_set_list[1:6],search = TRUE )
+
+colnames(glioblastoma_scRNAseq_Seurat_Harmony_cancer_cells@meta.data)[(ncol(glioblastoma_scRNAseq_Seurat_Harmony_cancer_cells@meta.data)-5):(ncol(glioblastoma_scRNAseq_Seurat_Harmony_cancer_cells@meta.data))] <- as.character(names(Neftel_cellular_subtypes_gene_set_list)[1:6])
+```
+
+```{r}
+#Defining cellular subtype based on highest score
+glioblastoma_scRNAseq_Seurat_Harmony_cancer_cells@meta.data$cellular_subtype <- NA
+max_subset_col <- max.col(glioblastoma_scRNAseq_Seurat_Harmony_cancer_cells@meta.data[,names(Neftel_cellular_subtypes_gene_set_list)[1:6]])
+
+max_subset <- c()
+for(cell in max_subset_col){
+  max_subset<-c(max_subset,names(Neftel_cellular_subtypes_gene_set_list)[cell])
+}
+
+glioblastoma_scRNAseq_Seurat_Harmony_cancer_cells@meta.data$cellular_subtype <- max_subset
+```
+
+# Save Seurat objects
+```{r}
+#Saving the Seurat object
+saveRDS(glioblastoma_scRNAseq_Seurat_Harmony, file= "/lustre/compbio/projects/glioma_scRNAseq/data/Seurat_objects/unfiltered_glioblastoma_scRNAseq_Harmony_Iina_Hypoxia_01072025.RDS")
+```
