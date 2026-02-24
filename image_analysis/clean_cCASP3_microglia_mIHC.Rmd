@@ -1,0 +1,740 @@
+---
+title: "cCASP3_microglia_mIHC"
+output: html_document
+date: "2026-01-28"
+---
+
+```{r}
+# load in libraries
+library(ggplot2)
+library(readxl)
+library(dplyr)
+
+
+load("C:/Users/is427866/Documents/hypoxia/data/colours_accent_8.RData")
+
+```
+
+```{r}
+library(tidyverse)
+library(cowplot)
+
+draw_label_theme <- function(label, theme = NULL, element = "text", ...) {
+  if (is.null(theme)) {
+    theme <- ggplot2::theme_get()
+  }
+  if (!element %in% names(theme)) {
+    stop("Element must be a valid ggplot theme element name")
+  }
+
+  elements <- ggplot2::calc_element(element, theme)
+
+  cowplot::draw_label(label, 
+                      fontfamily = elements$family,
+                      fontface = elements$face,
+                      colour = elements$color,
+                      size = elements$size,
+                      ...
+  )
+}
+```
+
+
+```{r}
+#Read data in
+df <- read.csv("S:/medi_cri_group_shared_sto-3581/multiplex_projects/mIHC_AT_PM_GK/Qupath projects/full project/measurements.csv")
+
+#Filter unnecessary columns
+df[,c("Object.ID", "Object.type", "Class", "Parent", "ROI")] <- NULL
+
+
+# Load metadata (age, sex, survival time), create relapse classes
+meta_df <- read_excel("S:/medi_cri_group_shared_sto-3581/multiplex_projects/mIHC_AT_PM_GK/cCASP3_sample_metadata_withNew.xlsx")
+meta_df$TMA_image <- paste(meta_df$TMA, meta_df$`Image name`, sep = " ")
+meta_df$relapse <- c("relapse")
+meta_df[which(meta_df$`Prim vs relapse, 1=PRIM, >1=relapse` == "1"), "relapse"] <- c("primary")
+
+# change missing cell count values to 0
+subset_df <- as.data.frame(df[,5:16]) # select counts
+subset_df <- subset_df %>% replace(is.na(.), 0)
+df[,5:16] <- subset_df
+
+df <- df[complete.cases(df), ]
+
+# make identifiers
+filter_values <- gsub(".*_([A-F])-(\\d+)\\.tif", "\\1\\2", df$Image)
+microscope_values <- sub("(^[a-z])", "\\U\\1", gsub("([a-z]+)(\\d+).*", "\\1 \\2", gsub("_.*", "", df$Image)), perl=TRUE)
+
+df$Image_formatted <- paste(microscope_values, filter_values, sep = " ")
+df$TMA <- microscope_values
+df$core_name <- filter_values
+
+# Area size
+df$Area.px.2 <- as.numeric(df$Area.px.2)
+df$`Area_um2` <- as.numeric(df$`Area.px.2` * 0.195364)
+
+
+# Remove .Num from colnames
+colnames(df) <- gsub("Num.", "", colnames(df), fixed = T)
+
+# reorder columns
+df <- df %>% select(Image, Name, Centroid.X.px, Centroid.Y.px, Detections,
+                    cCASP3_CD163_microglia, CD163_microglia, 
+                    Other_cell, Other_immune_cell, cCASP3_Other_cell,
+                    cCASP3_Other_immune_cell, cCASP3_microglia, 
+                    microglia, Area.px.2, Perimeter.px, artefact,
+                    Image_formatted, TMA, core_name, Area_um2)
+
+
+# merge with metadata
+df <- merge(df, meta_df[c(1,3,5,7,8:10,12:17)], by.x = "Image_formatted", by.y = "TMA_image", all.y = F)
+
+# fix grading and remove grade 1 samples
+
+df$Grade <- as.numeric(df$Grade)
+temp <- which(df$`IDH 0=WT, 1=MUT, NA` == "0" & df$Grade < 4)
+df[temp,"Grade"] <- c(4)
+
+df <- subset(df, Grade != 1)
+
+# remove cases that can't be classified as IDHwt
+df$Ikä <- as.numeric(df$Ikä)
+temp <- which(df$`IDH 0=WT, 1=MUT, NA` == "0" & (df$Ikä < 20 | is.na(df$Ikä)))
+
+if(length(temp)!=0){
+  plot_df <- df[-temp,]
+}else{
+  plot_df <- df
+}
+
+#Filter out hypoxia areas that have less than 20 cells
+df <- subset(df, Detections >= 20)
+
+```
+
+```{r}
+table(df$`IDH 0=WT, 1=MUT, NA`,df$Name)
+table(df$Grade,df$Name)
+
+setdiff(unique(df$Image_formatted), unique(meta_df$TMA_image))
+```
+
+```{r calc_celltype_fractions_WITH_OTHER}
+library(data.table)
+library(reshape2)
+
+plot_df <- df
+
+rownames(plot_df) <- make.names(plot_df$TMA_code_hypoxia, unique = TRUE)
+test <- melt(plot_df, measure.vars = c(7:14,17))
+#test$variable <- gsub("Num ", "", test$variable)
+
+test$fraction_in_sample <- 0
+test$fraction_in_hypoxia <- 0
+test$fraction_in_sample_hypoxia <- 0
+
+for (i in 1:length(test$Core.identifier)) {
+  # fraction in sample
+  n <- test[i,"sample_EP_Stroma"]
+  temp <- which(test[,"sample_EP_Stroma"] == n)
+  temp_sum <- sum(test[temp,"value"])
+  test[i,"fraction_in_sample"] <- (test[i,"value"]/temp_sum)*100
+  
+    # fraction in ROI
+  n <- test[i,"Core.identifier_EP_Stroma"]
+  temp <- which(test[,"Core.identifier_EP_Stroma"] == n)
+  temp_sum <- sum(test[temp,"value"])
+  test[i,"fraction_in_hypoxia"] <- (test[i,"value"]/temp_sum)*100
+  
+      # fraction in treatment
+  n <- test[i,"hoito_EP_Stroma"]
+  temp <- which(test[,"hoito_EP_Stroma"] == n )
+  temp_sum <- sum(test[temp,"value"])
+  test[i,"fraction_in_sample_hypoxia"] <- (test[i,"value"]/temp_sum)*100
+
+}
+
+shared_data <- test
+
+shared_data_Other <- shared_data %>% replace(is.na(.), 0)
+#shared_data[,c(14,15)] <- NULL
+```
+
+```{r cell_density}
+# Calculate cell densities
+library(data.table)
+library(reshape2)
+
+plot_df <- subset(df, Name != "PathAnnotationObject")
+
+plot_df$density_all_cells_per10000um <- (plot_df$Detections/plot_df$Area_um2)*10000
+plot_df$density_immune_cells_per10000um  <- ((plot_df$Detections - plot_df$Other_cell - plot_df$cCASP3_Other_cell - plot_df$artefact)/plot_df$`Area_um2`)*10000
+
+plot_df_density <- plot_df
+
+plot_df$TMA_code_hypoxia <- paste(plot_df$TMA_code, plot_df$Name, sep = "_")
+
+rownames(plot_df) <- make.names(plot_df$TMA_code_hypoxia, unique = TRUE)
+test <- melt(plot_df, measure.vars = c(7:14,17))
+
+test$density <- 0
+
+for (i in 0:length(test$TMA_code)) {
+  test[i,"density"] <- (test[i,"value"]/test[i,"Area_um2"])*10000
+
+}
+
+shared_data <- test
+
+#shared_data <- shared_data %>% replace(is.na(.), 0)
+
+shared_data_density <- shared_data
+
+```
+
+
+
+```{r}
+# Create plotting labels for df
+
+test <- shared_data_density
+
+# Create grouping factor which considers hypoxia class and IDH-status
+test$group_for_plot_IDH <- c(NA)
+test[which(test$Name == "Non hypoxic" & test$`IDH 0=WT, 1=MUT, NA`== 0),"group_for_plot_IDH"] <- "Normoxic, IDHwt"
+test[which(test$Name == "Low hypoxia" & test$`IDH 0=WT, 1=MUT, NA`== 0),"group_for_plot_IDH"] <- "Low hypoxia, IDHwt"
+test[which(test$Name == "High hypoxia" & test$`IDH 0=WT, 1=MUT, NA`== 0),"group_for_plot_IDH"] <- "High hypoxia, IDHwt"
+
+test[which(test$Name == "Non hypoxic" & test$`IDH 0=WT, 1=MUT, NA`== 1 & test$Grade == 3),"group_for_plot_IDH"] <- "Normoxic, IDHmut Grade 3"
+test[which(test$Name == "Low hypoxia" & test$`IDH 0=WT, 1=MUT, NA`== 1 & test$Grade == 3),"group_for_plot_IDH"] <- "Low hypoxia, IDHmut Grade 3"
+test[which(test$Name == "High hypoxia" & test$`IDH 0=WT, 1=MUT, NA`== 1 & test$Grade == 3),"group_for_plot_IDH"] <- "High hypoxia, IDHmut Grade 3"
+
+test[which(test$Name == "Non hypoxic" & test$`IDH 0=WT, 1=MUT, NA`== 1 & test$Grade == 4),"group_for_plot_IDH"] <- "Normoxic, IDHmut Grade 4"
+test[which(test$Name == "Low hypoxia" & test$`IDH 0=WT, 1=MUT, NA`== 1 & test$Grade == 4),"group_for_plot_IDH"] <- "Low hypoxia, IDHmut Grade 4"
+test[which(test$Name == "High hypoxia" & test$`IDH 0=WT, 1=MUT, NA`== 1 & test$Grade == 4),"group_for_plot_IDH"] <- "High hypoxia, IDHmut Grade 4"
+
+```
+
+
+```{r VIZ_individual_celltypes_boxplots_grade, fig.width=5, fig.height=5}
+################################
+# Plotting
+library(ggbreak)
+
+for (ct in unique(test$variable)) {
+  temp_ct <- subset(test, Grade != 1)
+  temp_ct <- subset(temp_ct, variable == ct)
+  temp_ct <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` != "NA")
+  
+  sub_mut <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "1")
+  sub_wt <- subset(temp_ct, `IDH 0=WT, 1=MUT, NA` == "0")
+  
+    ## PLOT WITH SAME Y AXIS
+  # Extract maximum Y-axis values
+# max_y1 <- max(sub_mut$density)
+# max_y2 <- max(sub_wt$density)
+# 
+# # Determine the larger Y-axis value
+# max_y <- max(max_y1, max_y2)
+  
+    # All samples, split by hypoxia levels and IDH GROUPED
+ p1 <- ggplot(sub_mut, aes(x=as.factor(Grade), y=density, fill = factor(Name, levels = c("Non hypoxic", "Low hypoxia", "High hypoxia"), labels = c("Normoxia", "Low hypoxia", "High hypoxia")))) +
+   geom_boxplot(outlier.shape = NA) + 
+   theme_classic() +
+   labs(title=paste("IDHmut"),x="Grade", y = "Cells / 10 000 µm²") +
+   guides(fill=guide_legend(title="Group")) +
+   geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0)) +
+   scale_fill_manual(values=accent_8_colours) +
+   theme(legend.position="none") #+
+   #ylim(0, 55) #+
+   #scale_y_break(breaks=c(17, 17), scales = 0.2)
+ 
+ 
+ # All samples, split by hypoxia levels and IDH GROUPED
+  p2 <- ggplot(sub_wt, aes(x=as.factor(Grade), y=density, fill = factor(Name, levels = c("Non hypoxic", "Low hypoxia", "High hypoxia"), labels = c("Normoxia", "Low hypoxia", "High hypoxia")))) +
+   geom_boxplot(outlier.shape = NA) + 
+   theme_classic() +
+   labs(title=paste("IDHwt, ", ct, sep = ""),x="Grade", y = "Cells / 10 000 µm²") +
+   guides(fill=guide_legend(title="Group")) +
+   geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0)) +
+   scale_fill_manual(values=accent_8_colours) #+
+    #theme(legend.position="none") #+
+   #ylim(0, 55) +
+    #scale_y_break(breaks=c(25, 25), scales = 0.2, expand = T)
+  print(p2)
+  #ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Image analysis/Visualizations, boxplots and barplots/TMA only/boxplots/cCASP3_stainings/celltype_density_IDHwtOnly/", ct, ".pdf", sep = ""))
+ 
+  library(cowplot)
+  title <- ggdraw() +
+  draw_label_theme(paste("Cell type density in hypoxia class", ct, sep = " "), 
+                   theme = theme_classic(), element = "plot.title",
+                   x = 0.05, hjust = 0, vjust = 1)
+  
+  p <- plot_grid(title, NULL, p1,p2, ncol = 2,  rel_heights = c(0.1, 1), rel_widths = c(0.80, 1.1))
+  #print(p)
+  
+  #ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Image analysis/Visualizations, boxplots and barplots/TMA only/boxplots/cCASP3_stainings/celltype_density_IDHmut_IDHwt/", ct, ".pdf", sep = ""))
+
+  
+}
+
+
+
+```
+
+```{r}
+# make the result table 
+ # res_table <- as.data.frame(matrix(ncol = 1, nrow = length(unique(test$variable))))
+ # rownames(res_table) <- unique(test$variable)
+ # colnames(res_table) <- c("Norm - Low, IDHmut Grade 4")
+
+#test_sub <- test[which(test$group_for_plot_IDH == "Normoxic, IDHmut Grade 4" | test$group_for_plot_IDH == "Low hypoxia, IDHmut Grade 4"),]
+#test_sub <- test[which(test$group_for_plot_IDH == "Normoxic, IDHmut Grade 4" | test$group_for_plot_IDH == "High hypoxia, IDHmut Grade 4"),]
+#test_sub <- test[which(test$group_for_plot_IDH == "Low hypoxia, IDHmut Grade 4" | test$group_for_plot_IDH == "High hypoxia, IDHmut Grade 4"),]
+
+#test_sub <- test[which(test$group_for_plot_IDH == "Normoxic, IDHwt" | test$group_for_plot_IDH == "Low hypoxia, IDHwt"),]
+#test_sub <- test[which(test$group_for_plot_IDH == "Normoxic, IDHwt" | test$group_for_plot_IDH == "High hypoxia, IDHwt"),]
+test_sub <- test[which(test$group_for_plot_IDH == "Low hypoxia, IDHwt" | test$group_for_plot_IDH == "High hypoxia, IDHwt"),]
+ 
+
+#res_table$`Norm - High, IDHmut Grade 4` <- NA
+#res_table$`Low - High, IDHmut Grade 4` <- NA
+
+#res_table$`Norm - Low, IDHwt` <- NA
+#res_table$`Norm - High, IDHwt` <- NA
+res_table$`Low - High, IDHwt` <- NA
+
+
+p_values <- numeric(length(unique(test_sub$variable)))
+
+m <- 6
+
+for (ct in unique(test_sub$variable)) {
+   
+  sub <- subset(test_sub, test_sub$variable == ct)
+  #sub_test <- dcast(sub, Name ~ fraction_in_hypoxia_class)
+  print(ct)
+  
+  sub$Name <- as.factor(sub$Name)
+  
+  # Wilcoxon
+  res <- wilcox.test(density ~ group_for_plot_IDH, data=sub)
+  text <- paste("W = ", res$statistic, ", p-value = ", res$p.value, sep = "")
+  print(text)
+  
+  # Store p-value
+  p_values[ct] <- res$p.value
+  
+  n <- which(rownames(res_table) == ct)
+  res_table[n,m] <- text
+}
+
+# Apply p-value correction (Benjamini-Hochberg FDR)
+p_adjusted <- p.adjust(p_values, method = "BH")
+
+# Add adjusted p-values to results table
+for (ct in unique(test_sub$variable)) {
+  n <- which(rownames(res_table) == ct)
+  res_table[n,m] <- paste(res_table[n,m], ", p.adj = ", p_adjusted[ct], sep = "")
+}
+
+res_table
+
+#write.csv(res_table, "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Image analysis/Visualizations, boxplots and barplots/TMA only/boxplots/cCASP3_stainings/Wilcox_boxplots_celltypes_IDH_hypoxia_density_statistics.csv")
+```
+
+
+# Cell type percentage for cCASP3 in IDHwt
+```{r}
+#calc percentages
+library(dplyr)
+library(ggplot2)
+
+df_wt <- subset(df, `IDH 0=WT, 1=MUT, NA` == 0)
+
+# Identify valid cell-type columns
+cell_types <- colnames(df_wt) %>%
+  .[!grepl("^cCASP3_", .)] %>%
+  .[sapply(df_wt[.], is.numeric)] %>%
+  .[paste0("cCASP3_", .) %in% colnames(df_wt)]
+
+# Calculate percentages
+plot_data <- lapply(cell_types, function(cell_type) {
+  total_col <- cell_type
+  cCASP3_col <- paste0("cCASP3_", cell_type)
+  
+  total <- sum(df_wt[[total_col]], na.rm = TRUE)
+  cCASP3_count <- sum(df_wt[[cCASP3_col]], na.rm = TRUE)
+  
+  if (total > 0) {
+    cCASP3_pct <- (cCASP3_count / total) * 100
+    data.frame(
+      cell_type = cell_type,
+      status = c("cCASP3+", "cCASP3-"),
+      percentage = c(cCASP3_pct, 100 - cCASP3_pct)
+    )
+  } else {
+    NULL
+  }
+}) %>%
+  bind_rows()
+
+# Plot
+ggplot(plot_data, aes(x = cell_type, y = percentage, fill = status)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = accent_8_colours) +
+  theme_classic() +
+  labs(
+    title = "cCASP3+ vs cCASP3- Cells by Cell Type",
+    x = "Cell Type",
+    y = "Percentage (%)",
+    fill = "Status"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Image analysis/Visualizations, boxplots and barplots/TMA only/barplots/celltype_cCASP3_fractions_IDHwt", ".pdf", sep = ""))
+
+```
+
+```{r}
+#Calculate percentage per hypoxia class
+df_wt <- subset(df, `IDH 0=WT, 1=MUT, NA` == 0)
+
+# Define metadata columns to exclude
+metadata_cols <- c("Image_formatted", "Image", "Name", "Centroid.X.px", "Centroid.Y.px", 
+                   "Detections", "Area.px.2", "Perimeter.px", "artefact", "TMA", 
+                   "core_name", "Area_um2", "TMA_code", "Code on TMA", "Grade", 
+                   "Image name", "Sample code.x", "IDH 0=WT, 1=MUT, NA", 
+                   "Prim vs relapse, 1=PRIM, >1=relapse", "Ikä", "Sukupuoli 0=inen", 
+                   "Kuollut 2016 lopussa 1=kuollut", "Seuranta-aika pvinä", "relapse")
+
+# Get all cell type names (non-cCASP3 columns, excluding metadata)
+cell_types <- colnames(df_wt)[!grepl("cCASP3", colnames(df_wt)) & 
+                            !colnames(df_wt) %in% metadata_cols]
+
+# Calculate percentages by hypoxia class
+plot_data <- lapply(cell_types, function(cell_type) {
+  cCASP3_col <- paste0("cCASP3_", cell_type)
+  
+  # Check if cCASP3 column exists
+  if (cCASP3_col %in% colnames(df_wt)) {
+    df_wt %>%
+      group_by(Name) %>%
+      summarise(
+        # Total cells = non-cCASP3 cells + cCASP3 cells
+        total = sum(.data[[cell_type]], na.rm = TRUE) + 
+                sum(.data[[cCASP3_col]], na.rm = TRUE),
+        cCASP3_count = sum(.data[[cCASP3_col]], na.rm = TRUE),
+        .groups = 'drop'
+      ) %>%
+      filter(total > 0) %>%
+      mutate(
+        cell_type = cell_type,
+        cCASP3_pct = (cCASP3_count / total) * 100,
+        cCASP3_neg_pct = 100 - cCASP3_pct
+      ) %>%
+      select(Name, cell_type, cCASP3_pct, cCASP3_neg_pct) %>%
+      pivot_longer(cols = c(cCASP3_pct, cCASP3_neg_pct),
+                   names_to = "status",
+                   values_to = "percentage") %>%
+      mutate(status = ifelse(status == "cCASP3_pct", "cCASP3+", "cCASP3-"))
+  } else {
+    return(NULL)
+  }
+}) %>%
+  bind_rows()
+
+# Plot
+ggplot(plot_data, aes(x = cell_type, y = percentage, fill = status)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ Name) +
+  scale_fill_manual(values = accent_8_colours) +
+  theme_classic() +
+  labs(title = "cCASP3+ vs cCASP3- Cells by Cell Type and Hypoxia Class",
+       x = "Cell Type",
+       y = "Percentage (%)",
+       fill = "Status") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Image analysis/Visualizations, boxplots and barplots/TMA only/barplots/celltype_cCASP3_fractions_inHypoxia_IDHwt", ".pdf", sep = ""))
+
+
+```
+
+```{r}
+# Calculate pergentages per sample and hypoxia class
+df_wt <- subset(df, `IDH 0=WT, 1=MUT, NA` == 0)
+
+# Define metadata columns to exclude
+metadata_cols <- c("Image_formatted", "Image", "Name", "Centroid.X.px", "Centroid.Y.px", 
+                   "Detections", "Area.px.2", "Perimeter.px", "artefact", "TMA", 
+                   "core_name", "Area_um2", "TMA_code", "Code on TMA", "Grade", 
+                   "Image name", "Sample code.x", "IDH 0=WT, 1=MUT, NA", 
+                   "Prim vs relapse, 1=PRIM, >1=relapse", "Ikä", "Sukupuoli 0=inen", 
+                   "Kuollut 2016 lopussa 1=kuollut", "Seuranta-aika pvinä", "relapse")
+
+# Get all cell type names (non-cCASP3 columns, excluding metadata)
+cell_types <- colnames(df_wt)[!grepl("cCASP3", colnames(df_wt)) & 
+                            !colnames(df_wt) %in% metadata_cols]
+
+# Calculate percentages by hypoxia class AND TMA_code
+stats_data <- lapply(cell_types, function(cell_type) {
+  cCASP3_col <- paste0("cCASP3_", cell_type)
+  
+  # Check if cCASP3 column exists
+  if (cCASP3_col %in% colnames(df_wt)) {
+    df_wt %>%
+      group_by(Name, TMA_code) %>%
+      summarise(
+        # Total cells = non-cCASP3 cells + cCASP3 cells
+        total = sum(.data[[cell_type]], na.rm = TRUE) + 
+                sum(.data[[cCASP3_col]], na.rm = TRUE),
+        cCASP3_count = sum(.data[[cCASP3_col]], na.rm = TRUE),
+        .groups = 'drop'
+      ) %>%
+      filter(total > 0) %>%
+      mutate(
+        cell_type = cell_type,
+        cCASP3_pct = (cCASP3_count / total) * 100
+      ) %>%
+      select(Name, TMA_code, cell_type, total, cCASP3_count, cCASP3_pct)
+  } else {
+    return(NULL)
+  }
+}) %>%
+  bind_rows()
+
+# View the result
+stats_data <- as.data.frame(stats_data)
+
+stats_data
+
+```
+
+```{r}
+table(stats_data$Name, stats_data$cell_type)
+```
+
+
+```{r}
+test <- stats_data
+
+# make the result table 
+# res_table <- as.data.frame(matrix(ncol = 1, nrow = length(unique(test$cell_type))))
+# rownames(res_table) <- unique(test$cell_type)
+# colnames(res_table) <- c("Norm - Low, IDHwt")
+
+#test_sub <- test[which(test$Name == "Non hypoxic" | test$Name == "Low hypoxia"),]
+#test_sub <- test[which(test$Name == "Non hypoxic" | test$Name == "High hypoxia"),]
+test_sub <- test[which(test$Name == "Low hypoxia" | test$Name == "High hypoxia"),]
+ 
+
+#res_table$`Norm - High, IDHwt` <- NA
+res_table$`Low - High, IDHwt` <- NA
+
+
+p_values <- numeric(length(unique(test_sub$variable)))
+
+m <- 3
+
+for (ct in unique(test_sub$cell_type)) {
+   
+  sub <- subset(test_sub, test_sub$cell_type == ct)
+  print(ct)
+  
+  sub$Name <- as.factor(sub$Name)
+  
+  # Wilcoxon
+  res <- wilcox.test(cCASP3_pct ~ Name, data=sub)
+  text <- paste("W = ", res$statistic, ", p-value = ", res$p.value, sep = "")
+  print(text)
+  
+  # Store p-value
+  p_values[ct] <- res$p.value
+  
+  n <- which(rownames(res_table) == ct)
+  res_table[n,m] <- text
+}
+
+# Apply p-value correction (Benjamini-Hochberg FDR)
+p_adjusted <- p.adjust(p_values, method = "BH")
+
+# Add adjusted p-values to results table
+for (ct in unique(test_sub$cell_type)) {
+  n <- which(rownames(res_table) == ct)
+  res_table[n,m] <- paste(res_table[n,m], ", p.adj = ", p_adjusted[ct], sep = "")
+}
+
+res_table
+
+#rownames(res_table) <- paste("cCASP3 ", rownames(res_table))
+#write.csv(res_table, "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Image analysis/Visualizations, boxplots and barplots/TMA only/barplots/Wilcox_barplot_cCASP3celltypes_IDHwt_hypoxia_statistics.csv")
+```
+
+```{r, fig.width=5, fig.height=5}
+#plot values as boxplot
+
+for (ct in unique(stats_data$cell_type)) {
+  
+  temp_ct <- subset(stats_data, cell_type == ct)
+  
+ # All samples, split by hypoxia levels and IDH GROUPED
+  p2 <- ggplot(temp_ct, aes(x=as.factor(cell_type), y=cCASP3_pct, fill = factor(Name, levels = c("Non hypoxic", "Low hypoxia", "High hypoxia"), labels = c("Normoxia", "Low hypoxia", "High hypoxia")))) +
+   geom_boxplot(outlier.shape = NA) + 
+   theme_classic() +
+   labs(title=paste("IDHwt, cCASP+ ", ct, sep = ""),x=paste("cCASP3+ ", ct, sep=""), y = "cCASP3 percentage from celltype (%)") +
+   guides(fill=guide_legend(title="Group")) +
+   geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0)) +
+   scale_fill_manual(values=accent_8_colours) +
+    ylim(0, 100)
+    
+  
+  print(p2)
+  ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Image analysis/Visualizations, boxplots and barplots/TMA only/boxplots/cCASP3_stainings/cCASP3_percentage_from_celltype_IDHwtOnly/y100_cCASP3_", ct, ".pdf", sep = ""))
+ 
+  
+}
+
+```
+
+########### 
+# Single cell level analysis
+
+```{r}
+# read in data
+
+df1 <- read.csv("S:/medi_cri_group_shared_sto-3581/multiplex_projects/mIHC_AT_PM_GK/Qupath projects/full project/measurements_cell_15BF6_16AD3.csv")
+df2 <- read.csv("S:/medi_cri_group_shared_sto-3581/multiplex_projects/mIHC_AT_PM_GK/Qupath projects/full project/measurements_cell_16AD4_22BA1.csv")
+df3 <- read.csv("S:/medi_cri_group_shared_sto-3581/multiplex_projects/mIHC_AT_PM_GK/Qupath projects/full project/measurements_cell_23BD8_24BF3.csv")
+
+full_df <- rbind(df1,df2,df3)
+
+rm(df1,df2,df3)
+
+sub_df <- full_df[, c(1:8, grep("Cell.*mean", names(full_df)))]
+sub_df <- sub_df[,c(1:20)]
+
+rm(full_df)
+
+sub_df$Core.identifier <- gsub(".tif", "", sub_df$Image)
+
+# Load metadata (age, sex, survival time), create relapse classes
+meta_df <- read_excel("S:/medi_cri_group_shared_sto-3581/multiplex_projects/mIHC_AT_PM_GK/cCASP3_sample_metadata_withNew.xlsx")
+meta_df$TMA_image <- paste(meta_df$TMA, meta_df$`Image name`, sep = " ")
+meta_df$relapse <- c("relapse")
+meta_df[which(meta_df$`Prim vs relapse, 1=PRIM, >1=relapse` == "1"), "relapse"] <- c("primary")
+
+filter_values <- gsub(".*_([A-F])-(\\d+)\\.tif", "\\1\\2", sub_df$Image)
+microscope_values <- sub("(^[a-z])", "\\U\\1", gsub("([a-z]+)(\\d+).*", "\\1 \\2", gsub("_.*", "", sub_df$Image)), perl=TRUE)
+
+sub_df$Image_formatted <- paste(microscope_values, filter_values, sep = " ")
+sub_df$TMA <- microscope_values
+sub_df$core_name <- filter_values
+
+# merge with metadata
+sub_df <- merge(sub_df, meta_df[c(1,3,5,7,8:10,12:17)], by.x = "Image_formatted", by.y = "TMA_image", all.y = F)
+
+# fix grading and remove grade 1 samples
+
+sub_df$Grade <- as.numeric(sub_df$Grade)
+temp <- which(sub_df$`IDH 0=WT, 1=MUT, NA` == "0" & sub_df$Grade < 4)
+sub_df[temp,"Grade"] <- c(4)
+
+sub_df <- subset(sub_df, Grade != 1)
+
+# remove cases that can't be classified as IDHwt
+sub_df$Ikä <- as.numeric(sub_df$Ikä)
+temp <- which(sub_df$`IDH 0=WT, 1=MUT, NA` == "0" & (sub_df$Ikä < 20 | is.na(sub_df$Ikä)))
+
+if(length(temp)!=0){
+  plot_df <- sub_df[-temp,]
+}else{
+  plot_df <- sub_df
+}
+
+sub_df_whole <- sub_df
+
+```
+
+# Calculate ratios to normoxia, cell level
+
+```{r}
+# Normalize data to normoxia, calculate relation to normoxia
+# suhde normoxiaan = intensiteetti / intensiteetti normoxiassa?
+
+#sub_df <- subset(sub_df_whole, Name == "cCASP3pos_microglia" | Name == "microglia" )
+sub_df <- subset(sub_df_whole, Name == "CD163_cCASP3_microglia" | Name == "CD163pos_microglia" )
+
+ratio_df <- sub_df[0,]
+
+# For each sample, calculate the average expression in each hypoxia class
+
+avg_df_ADM <- aggregate(Cell..ADM.mean ~ Core.identifier + Parent + `IDH 0=WT, 1=MUT, NA`, data = sub_df, FUN = mean, na.rm = TRUE)
+avg_df_Ca9 <- aggregate(Cell..CA9.mean ~ Core.identifier + Parent + `IDH 0=WT, 1=MUT, NA`, data = sub_df, FUN = mean, na.rm = TRUE)
+avg_df_cCASP3 <- aggregate(Cell..cCASP3.mean ~ Core.identifier + Parent + `IDH 0=WT, 1=MUT, NA`, data = sub_df, FUN = mean, na.rm = TRUE)
+avg_df_CD45 <- aggregate(Cell..CD45.mean ~ Core.identifier + Parent + `IDH 0=WT, 1=MUT, NA`, data = sub_df, FUN = mean, na.rm = TRUE)
+avg_df_TMEM119 <- aggregate(Cell..TMEM119.mean ~ Core.identifier + Parent + `IDH 0=WT, 1=MUT, NA`, data = sub_df, FUN = mean, na.rm = TRUE)
+avg_df_CD163 <- aggregate(Cell..CD163.mean ~ Core.identifier + Parent + `IDH 0=WT, 1=MUT, NA`, data = sub_df, FUN = mean, na.rm = TRUE)
+
+
+# Example list of data frames
+df_list <- list(avg_df_ADM, avg_df_Ca9, avg_df_cCASP3, avg_df_CD45, avg_df_TMEM119, avg_df_CD163)
+
+# Merge all data frames in the list
+merged_df <- Reduce(function(x, y) merge(x, y, by = c("Core.identifier", "Parent", "IDH 0=WT, 1=MUT, NA")), df_list)
+merged_df <- subset(merged_df, Parent == "Non hypoxic")
+
+
+# calculate ratios for each cell
+for (core in unique(sub_df$Core.identifier)) {
+  
+  sub <- subset(sub_df, Core.identifier == core)
+  
+  divider_ADM <- merged_df[which(merged_df$Core.identifier == core),"Cell..ADM.mean"]
+  divider_CA9 <- merged_df[which(merged_df$Core.identifier == core),"Cell..CA9.mean"]
+  divider_cCASP3 <- merged_df[which(merged_df$Core.identifier == core),"Cell..cCASP3.mean"]
+  divider_CD45 <- merged_df[which(merged_df$Core.identifier == core),"Cell..CD45.mean"]
+  divider_TMEM119 <- merged_df[which(merged_df$Core.identifier == core),"Cell..TMEM119.mean"]
+  divider_CD163 <- merged_df[which(merged_df$Core.identifier == core),"Cell..CD163.mean"]
+  
+  sub[,"ratio_ADM"] <- sub$Cell..ADM.mean / divider_ADM
+  sub[,"ratio_CA9"] <- sub$Cell..CA9.mean / divider_CA9
+  sub[,"ratio_cCASP3"] <- sub$Cell..cCASP3.mean / divider_cCASP3
+  sub[,"ratio_CD45"] <- sub$Cell..CD45.mean / divider_CD45
+  sub[,"ratio_TMEM119"] <- sub$Cell..TMEM119.mean / divider_TMEM119
+  sub[,"ratio_CD163"] <- sub$Cell..CD163.mean / divider_CD163
+  
+  ratio_df <- rbind(ratio_df, sub)
+  
+}
+
+ratio_df <- subset(ratio_df, ratio_CD45 != Inf)
+ratio_df <- subset(ratio_df, ratio_TMEM119 != Inf)
+ratio_df <- subset(ratio_df, ratio_CD163 != Inf)
+
+
+
+```
+
+# Visualize individual ratios
+
+```{r, fig.width=20, fig.height=5}
+library(ggplot2)
+library(ggridges)
+
+sub_wt <- subset(ratio_df, `IDH 0=WT, 1=MUT, NA` == "0")
+sub_mut <- subset(ratio_df, `IDH 0=WT, 1=MUT, NA` == "1")
+
+p2 <- ggplot(sub_wt, aes(x=`ratio_cCASP3`, y=factor(Parent, levels = c("Non hypoxic", "Low hypoxia", "High hypoxia")), fill=factor(Parent, levels = c("Non hypoxic", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHwt") + scale_x_continuous(breaks=seq(0,15,1.5), limits = c(0,15)) + scale_fill_manual(values=accent_8_colours)
+p1 <- ggplot(sub_mut, aes(x=`ratio_cCASP3`, y=factor(Parent, levels = c("Non hypoxic", "Low hypoxia", "High hypoxia")), fill=factor(Parent, levels = c("Non hypoxic", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHmut") + scale_x_continuous(breaks=seq(0,15,1.5), limits = c(0,15)) + scale_fill_manual(values=accent_8_colours)
+
+title <- ggdraw() +
+  draw_label_theme(paste("Cell type fractions in hypoxia class", sep = " "), 
+                   theme = theme_classic(), element = "plot.title",
+                   x = 0.05, hjust = 0, vjust = 1)
+
+plot_grid(title, NULL, p1,p2, ncol = 2, rel_heights = c(0.1, 1), rel_widths = c(1, 1))
+ggsave("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Image analysis/cCASP3_ridgeplots/CD163pos_microglia_cCASP3_intensity_mean.pdf")
+
+```
+
