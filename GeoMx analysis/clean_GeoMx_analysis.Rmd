@@ -1,0 +1,938 @@
+---
+title: "GeoMx_allROIs_combined"
+output: html_document
+date: "2024-11-04"
+---
+
+```{r setup, include=FALSE}
+ # if (!require("BiocManager", quietly = TRUE))
+ #     install.packages("BiocManager")
+ # 
+ # # The following initializes most up to date version of Bioc
+ #  BiocManager::install()
+ # # 
+ #  BiocManager::install("AUCell", lib = renv::paths$library())
+ #  BiocManager::install("NanoStringNCTools", lib = renv::paths$library())
+ #  BiocManager::install("GeomxTools", lib = renv::paths$library())
+ #  BiocManager::install("GeoMxWorkflows", lib = renv::paths$library())
+ #  BiocManager::install("preprocessCore", lib = renv::paths$library())
+ #  BiocManager::install("ggfortify", lib = renv::paths$library())
+# BiocManager::install("SpatialDecon", lib = renv::paths$library())
+#BiocManager::install("tidyverse", lib = renv::paths$library())
+#BiocManager::install("ComplexHeatmap", lib = renv::paths$library())
+
+```
+
+```{r}
+library(preprocessCore)
+library(NanoStringNCTools)
+library(GeomxTools)
+library(GeoMxWorkflows)
+library(Seurat)
+library(SpatialDecon)
+library(patchwork)
+library(AUCell)
+library(tidyverse)
+library(ComplexHeatmap)
+```
+
+
+
+```{r}
+if(packageVersion("GeomxTools") < "2.1" & 
+   packageVersion("GeoMxWorkflows") >= "1.0.1"){
+    stop("GeomxTools and Workflow versions do not match. Please use the same version. 
+    This workflow is meant to be used with most current version of packages. 
+    If you are using an older version of Bioconductor please reinstall GeoMxWorkflows and use vignette(GeoMxWorkflows) instead")
+}
+
+if(packageVersion("GeomxTools") > "2.1" & 
+   packageVersion("GeoMxWorkflows") <= "1.0.1"){
+    stop("GeomxTools and Workflow versions do not match. 
+         Please use the same version, see install instructions above.")
+    
+    # to remove current package version
+        # remove.packages("GeomxTools")
+        # remove.packages("GeoMxWorkflows")
+    # see install instructions above 
+}
+```
+
+```{r}
+library(ggplot2)
+
+col_by <- "IDHstatus"
+
+# Graphical summaries of QC statistics plot function
+QC_histogram <- function(assay_data = NULL,
+                         annotation = NULL,
+                         fill_by = NULL,
+                         thr = NULL,
+                         scale_trans = NULL) {
+    plt <- ggplot(assay_data,
+                  aes_string(x = paste0("unlist(`", annotation, "`)"),
+                             fill = fill_by)) +
+        geom_histogram(bins = 50) +
+        geom_vline(xintercept = thr, lty = "dashed", color = "black") +
+        theme_bw() + guides(fill = "none") +
+        facet_wrap(as.formula(paste("~", fill_by)), nrow = 4) +
+        labs(x = annotation, y = "Segments, #", title = annotation)
+    if(!is.null(scale_trans)) {
+        plt <- plt +
+            scale_x_continuous(trans = scale_trans)
+    }
+    plt
+}
+```
+
+
+```{r}
+# Reference the main folder 'file.path' containing the sub-folders with each
+# data file type:
+#datadir <- system.file("extdata", "WTA_NGS_Example",
+                       #package="GeoMxWorkflows")
+# to locate a specific file path replace the above line with
+
+datadir <- file.path("C:/Users/is427866/Documents/hypoxia/GeoMx_data")
+
+# the DataLocation folder should contain a dccs, pkcs, and annotation folder
+# with each set of files present as needed
+
+
+# automatically list files in each directory for use
+DCCFiles <- dir(file.path(paste(datadir, "/DCC-20240213", sep = "")), pattern = ".dcc",
+                full.names = TRUE, recursive = TRUE)
+PKCFiles <- unzip(zipfile = dir(file.path(datadir), pattern = ".zip",
+                                full.names = TRUE, recursive = TRUE))
+SampleAnnotationFile <-
+    dir(file.path(datadir), pattern = ".xlsx",
+        full.names = TRUE, recursive = TRUE)
+```
+
+
+```{r}
+# load data
+demoData <-
+    readNanoStringGeoMxSet(dccFiles = DCCFiles,
+                           pkcFiles = PKCFiles,
+                           phenoDataFile = SampleAnnotationFile,
+                           phenoDataSheet = "Hypoxia experiment_20231123T111",
+                           phenoDataDccColName = "Sample_ID")
+
+load("C:/Users/is427866/Documents/hypoxia/data/colours_accent_8.RData")
+
+```
+
+
+## Combine segments
+
+```{r}
+#demoData_backup <- demoData
+
+macros_test <- demoData[, demoData@phenoData@data$Segment == "Macrophages"]
+micros_test <- demoData[, demoData@phenoData@data$Segment == "Microglia"]
+other_test <- demoData[, demoData@phenoData@data$Segment == "Other cell"]
+combined_test <- demoData[, demoData@phenoData@data$Segment == "Microglia"]
+
+macros_test_exprs <- exprs(macros_test)
+micros_test_exprs <- exprs(micros_test)
+other_test_exprs <- exprs(other_test)
+micros_test_exprs_og <- exprs(micros_test)
+
+macrophages_with_microglia_pair <- c()
+others_with_microglia_pair <- c()
+
+area_vector <- c()
+
+# Combine data
+
+for(cn in colnames(micros_test_exprs)) {
+  
+  # Find same sample
+  n <- which(rownames(pData(micros_test)) == cn)
+  slide_name <- pData(micros_test)[n,"Slide Name"]
+  roi <- pData(micros_test)[n,"Roi"]
+  area_size <- pData(micros_test)[n,"Area"]
+  
+  # segment in macrophages
+  m <- which(pData(macros_test)$`Slide Name` == slide_name & pData(macros_test)$`Roi` == roi)
+  macro_cn <- rownames(pData(macros_test))[m]
+  
+  #segment in other cells
+  o <- which(pData(other_test)$`Slide Name` == slide_name & pData(other_test)$`Roi` == roi)
+  other_cn <- rownames(pData(other_test))[o]
+  
+  print(paste(cn, " ", macro_cn, ", ", other_cn))
+  
+  # Combine counts
+  if(length(macro_cn) != 0) {
+    micros_test_exprs[,cn] <- micros_test_exprs[,cn] + (macros_test_exprs[,macro_cn]) 
+    macrophages_with_microglia_pair <- c(macrophages_with_microglia_pair, macro_cn)
+    area_size <- area_size + pData(macros_test)[m,"Area"]
+  }
+  
+  if((length(other_cn) != 0 && other_cn != "NA") == T) {
+    micros_test_exprs[,cn] <- micros_test_exprs[,cn] + (other_test_exprs[,other_cn])
+    others_with_microglia_pair <- c(others_with_microglia_pair, other_cn)
+    area_size <- area_size + pData(other_test)[o,"Area"]
+  }
+  
+  area_vector <- c(area_vector, area_size)
+}
+
+# Print macrophages without pair
+setdiff(rownames(pData(macros_test)), macrophages_with_microglia_pair)
+setdiff(rownames(pData(other_test)), others_with_microglia_pair)
+#missing <- setdiff(rownames(pData(macros_test)), macrophages_with_microglia_pair)
+
+micros_test_exprs <- as.data.frame(micros_test_exprs)
+macros_test_exprs <- as.data.frame(macros_test_exprs)
+other_test_exprs <- as.data.frame(other_test_exprs)
+
+# Commented out as we don't want to include single segments
+# # Note! This has to be manually checked
+# micros_test_exprs$`DSP-1001660008007-A-H06.dcc` <- macros_test_exprs$`DSP-1001660008007-A-H06.dcc`
+# micros_test_exprs$`DSP-1001660008007-A-H09.dcc` <- macros_test_exprs$`DSP-1001660008007-A-H09.dcc`
+
+# sort the column names to match the TAM dataframe
+micros_test_exprs <- micros_test_exprs[colnames(exprs(combined_test))]
+
+# Make TAM matrix
+exprs(combined_test) <- as.matrix(micros_test_exprs)
+
+print("Done!")
+
+demoData <- combined_test
+pData(demoData)[,"Area"] <- area_vector # Note that X and Y coordinates do not hold!
+pData(demoData)[,"Segment"] <- c("All Combined")
+
+pData(demoData)
+
+```
+
+```{r}
+#library(knitr)
+pkcs <- annotation(demoData)
+modules <- gsub(".pkc", "", pkcs)
+#kable(data.frame(PKCs = pkcs, modules = modules))
+```
+
+
+```{r}
+demoData <- shiftCountsOne(demoData, useDALogic = TRUE)
+
+QC_params <-
+    list(minSegmentReads = 1000, # Minimum number of reads (1000)
+         percentTrimmed = 80,    # Minimum % of reads trimmed (80%)
+         percentStitched = 80,   # Minimum % of reads stitched (80%)
+         percentAligned = 80,    # Minimum % of reads aligned (80%)
+         percentSaturation = 60, # Minimum sequencing saturation (50%)
+         minNegativeCount = 1,   # Minimum negative control counts (10)
+         maxNTCCount = 9000,     # Maximum counts observed in NTC well (1000)
+         minNuclei = -1,         # Minimum # of nuclei estimated (100)
+         minArea = 2500)         # Minimum segment area (5000)
+demoData <-
+    setSegmentQCFlags(demoData, 
+                      qcCutoffs = QC_params)        
+
+# Collate QC Results
+QCResults <- protocolData(demoData)[["QCFlags"]]
+flag_columns <- colnames(QCResults)
+QC_Summary <- data.frame(Pass = colSums(!QCResults[, flag_columns]),
+                         Warning = colSums(QCResults[, flag_columns]))
+QCResults$QCStatus <- apply(QCResults, 1L, function(x) {
+    ifelse(sum(x) == 0L, "PASS", "WARNING")
+})
+
+QC_Summary["TOTAL FLAGS", ] <-
+    c(sum(QCResults[, "QCStatus"] == "PASS"),
+      sum(QCResults[, "QCStatus"] == "WARNING"))
+
+sData(demoData)
+
+QC_histogram(sData(demoData), "Trimmed (%)", col_by, 80)
+QC_histogram(sData(demoData), "Stitched (%)", col_by, 80)
+QC_histogram(sData(demoData), "Aligned (%)", col_by, 80)
+QC_histogram(sData(demoData), "Saturated (%)", col_by, 60) + labs(title = "Sequencing Saturation (%)", x = "Sequencing Saturation (%)")
+QC_histogram(sData(demoData), "Area", col_by, 2500, scale_trans = "log10")
+```
+
+```{r}
+
+# calculate the negative geometric means for each module
+negativeGeoMeans <- 
+    esBy(negativeControlSubset(demoData), 
+         GROUP = "Module", 
+         FUN = function(x) { 
+             assayDataApply(x, MARGIN = 2, FUN = ngeoMean, elt = "exprs") 
+         }) 
+protocolData(demoData)[["NegGeoMean"]] <- negativeGeoMeans
+
+# explicitly copy the Negative geoMeans from sData to pData
+negCols <- paste0("NegGeoMean_", modules)
+pData(demoData)[, negCols] <- sData(demoData)[["NegGeoMean"]]
+for(ann in negCols) {
+    plt <- QC_histogram(pData(demoData), ann, col_by, 2, scale_trans = "log10")
+    print(plt)
+}
+
+protocolData(demoData)[["NegGeoMean"]] 
+
+```
+
+```{r}
+# detatch neg_geomean columns ahead of aggregateCounts call
+pData(demoData) <- pData(demoData)[, !colnames(pData(demoData)) %in% negCols]
+
+#kable(QC_Summary, caption = "QC Summary Table for each Segment")
+
+demoData <- demoData[, QCResults$QCStatus == "PASS"]
+#demoData <- demoData[, demoData@phenoData@data$Quality == "good"]
+
+# Subsetting our dataset has removed samples which did not pass QC
+dim(demoData)
+
+# Features  Samples 
+#    18815       56 
+   
+```
+
+#### Probe QC
+
+```{r}
+# Generally keep the qcCutoffs parameters unchanged. Set removeLocalOutliers to 
+# FALSE if you do not want to remove local outliers
+demoData <- setBioProbeQCFlags(demoData, 
+                               qcCutoffs = list(minProbeRatio = 0.1,
+                                                percentFailGrubbs = 20), 
+                               removeLocalOutliers = TRUE)
+
+ProbeQCResults <- fData(demoData)[["QCFlags"]]
+
+# Define QC table for Probe QC
+qc_df <- data.frame(Passed = sum(rowSums(ProbeQCResults[, -1]) == 0),
+                    Global = sum(ProbeQCResults$GlobalGrubbsOutlier),
+                    Local = sum(rowSums(ProbeQCResults[, -2:-1]) > 0
+                                & !ProbeQCResults$GlobalGrubbsOutlier))
+qc_df
+
+```
+
+```{r}
+#Subset object to exclude all that did not pass Ratio & Global testing
+ProbeQCPassed <- 
+    subset(demoData, 
+           fData(demoData)[["QCFlags"]][,c("LowProbeRatio")] == FALSE &
+               fData(demoData)[["QCFlags"]][,c("GlobalGrubbsOutlier")] == FALSE)
+dim(ProbeQCPassed)
+# Features  Samples 
+#    18815       56 
+   
+demoData <- ProbeQCPassed 
+```
+
+```{r}
+# Check how many unique targets the object has
+length(unique(featureData(demoData)[["TargetName"]]))
+
+# collapse to targets
+target_demoData <- aggregateCounts(demoData)
+dim(target_demoData)
+   
+exprs(target_demoData)[1:5, 1:2]
+
+# Features  Samples 
+#    18677       56 
+#       DSP-1001660008006-B-A03.dcc DSP-1001660008006-B-A06.dcc
+# A2M                           447                         110
+# NAT2                           40                          30
+# ACADM                         124                          71
+# ACADS                          70                          40
+# ACAT1                         145                          56
+```
+
+#### Limit of Quantification
+
+```{r}
+# Define LOQ SD threshold and minimum value
+cutoff <- 2
+minLOQ <- 2
+
+# Calculate LOQ per module tested
+LOQ <- data.frame(row.names = colnames(target_demoData))
+for(module in modules) {
+    vars <- paste0(c("NegGeoMean_", "NegGeoSD_"),
+                   module)
+    if(all(vars[1:2] %in% colnames(pData(target_demoData)))) {
+        LOQ[, module] <-
+            pmax(minLOQ,
+                 pData(target_demoData)[, vars[1]] * 
+                     pData(target_demoData)[, vars[2]] ^ cutoff)
+    }
+}
+pData(target_demoData)$LOQ <- LOQ
+```
+
+
+#### Filtering
+
+```{r}
+LOQ_Mat <- c()
+for(module in modules) {
+    ind <- fData(target_demoData)$Module == module
+    Mat_i <- t(esApply(target_demoData[ind, ], MARGIN = 1,
+                       FUN = function(x) {
+                           x > LOQ[, module]
+                       }))
+    LOQ_Mat <- rbind(LOQ_Mat, Mat_i)
+}
+# ensure ordering since this is stored outside of the geomxSet
+LOQ_Mat <- LOQ_Mat[fData(target_demoData)$TargetName, ]
+```
+
+```{r segment_gene_detection}
+# Save detection rate information to pheno data
+pData(target_demoData)$GenesDetected <- 
+    colSums(LOQ_Mat, na.rm = TRUE)
+pData(target_demoData)$GeneDetectionRate <-
+    pData(target_demoData)$GenesDetected / nrow(target_demoData)
+
+# Determine detection thresholds: 1%, 5%, 10%, 15%, >15%
+pData(target_demoData)$DetectionThreshold <- 
+    cut(pData(target_demoData)$GeneDetectionRate,
+        breaks = c(0, 0.01, 0.05, 0.1, 0.15, 0.25, 1),
+        labels = c("<1%", "1-5%", "5-10%", "10-15%", "15-25%", ">25%"))
+
+# stacked bar plot of different cut points (1%, 5%, 10%, 15%)
+ggplot(pData(target_demoData),
+       aes(x = DetectionThreshold)) +
+    geom_bar(aes(fill = TAM_celltype)) +
+    geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+    theme_bw() +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+    labs(x = "Gene Detection Rate",
+         y = "Segments, #",
+         fill = "Segment Type")
+
+ggplot(pData(target_demoData),
+       aes(x = DetectionThreshold)) +
+    geom_bar(aes(fill = Hypoxia)) +
+    geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+    theme_bw() +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+    labs(x = "Gene Detection Rate",
+         y = "Segments, #",
+         fill = "Segment Type")
+
+ggplot(pData(target_demoData),
+       aes(x = DetectionThreshold)) +
+    geom_bar(aes(fill = IDHstatus)) +
+    geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+    theme_bw() +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+    labs(x = "Gene Detection Rate",
+         y = "Segments, #",
+         fill = "Segment Type")
+```
+
+
+```{r}
+#kable(table(pData(target_demoData)$DetectionThreshold, pData(target_demoData)$TAM_celltype))
+#kable(table(pData(target_demoData)$DetectionThreshold, pData(target_demoData)$Hypoxia))
+
+
+target_demoData <- target_demoData[, pData(target_demoData)$GeneDetectionRate >= .1]
+
+dim(target_demoData)
+```
+
+```{r}
+library(scales) # for percent
+
+# Calculate detection rate:
+LOQ_Mat <- LOQ_Mat[, colnames(target_demoData)]
+fData(target_demoData)$DetectedSegments <- rowSums(LOQ_Mat, na.rm = TRUE)
+fData(target_demoData)$DetectionRate <-
+    fData(target_demoData)$DetectedSegments / nrow(pData(target_demoData))
+
+# Gene of interest detection table
+goi <- c("PDCD1", "CD274", "IFNG", "CD8A", "CD68", "EPCAM",
+         "KRT18", "NPHS1", "NPHS2", "CALB1", "CLDN8")
+goi_df <- data.frame(
+    Gene = goi,
+    Number = fData(target_demoData)[goi, "DetectedSegments"],
+    DetectionRate = percent(fData(target_demoData)[goi, "DetectionRate"]))
+goi_df
+
+# Gene of interest detection table
+goi <- c("PTPRC", "CD163", "MRC1", "CD68", "CD4", "TMEM119",
+         "SALL1", "P2PRY12", "CA9", "VEGFA", "ADM", "PDK1")
+goi_df <- data.frame(
+    Gene = goi,
+    #Slide = pData(target_demoData)[, "Slide Name"],
+    Number = fData(target_demoData)[goi, "DetectedSegments"],
+    DetectionRate = percent(fData(target_demoData)[goi, "DetectionRate"]))
+goi_df
+```
+
+```{r}
+# Plot detection rate:
+plot_detect <- data.frame(Freq = c(1, 5, 10, 20, 30, 50))
+plot_detect$Number <-
+    unlist(lapply(c(0.01, 0.05, 0.1, 0.2, 0.3, 0.5),
+                  function(x) {sum(fData(target_demoData)$DetectionRate >= x)}))
+plot_detect$Rate <- plot_detect$Number / nrow(fData(target_demoData))
+rownames(plot_detect) <- plot_detect$Freq
+
+ggplot(plot_detect, aes(x = as.factor(Freq), y = Rate, fill = Rate)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = formatC(Number, format = "d", big.mark = ",")),
+              vjust = 1.6, color = "black", size = 4) +
+    scale_fill_gradient2(low = "dodgerblue3", mid = "#D3D3D3",
+                         high = "red3", midpoint = 0.5,
+                         limits = c(0,1),
+                         labels = scales::percent) +
+    theme_bw() +
+    scale_y_continuous(labels = scales::percent, limits = c(0,1),
+                       expand = expansion(mult = c(0, 0))) +
+    labs(x = "% of Segments",
+         y = "Genes Detected, % of Panel > LOQ")
+```
+
+```{r}
+# Subset to target genes detected in at least 5% of the samples.
+#   Also manually include the negative control probe, for downstream use
+negativeProbefData <- subset(fData(target_demoData), CodeClass == "Negative")
+neg_probes <- unique(negativeProbefData$TargetName)
+target_demoData <- 
+    target_demoData[fData(target_demoData)$DetectionRate >= 0.05 |
+                        fData(target_demoData)$TargetName %in% neg_probes, ]
+dim(target_demoData)
+# 5%
+# Features  Samples 
+#    10074       55 
+
+# 10%
+
+
+# retain only detected genes of interest
+goi <- goi[goi %in% rownames(target_demoData)]
+```
+
+#### Normalization
+
+## Negative probe and Q3 normalization
+```{r}
+library(reshape2)  # for melt
+library(cowplot)   # for plot_grid
+
+# Graph Q3 value vs negGeoMean of Negatives
+ann_of_interest <- "Hypoxia"
+Stat_data <- 
+    data.frame(row.names = colnames(exprs(target_demoData)),
+               Segment = colnames(exprs(target_demoData)),
+               Annotation = pData(target_demoData)[, ann_of_interest],
+               Q3 = unlist(apply(exprs(target_demoData), 2,
+                                 quantile, 0.75, na.rm = TRUE)),
+               NegProbe = exprs(target_demoData)[neg_probes, ])
+Stat_data_m <- melt(Stat_data, measure.vars = c("Q3", "NegProbe"),
+                    variable.name = "Statistic", value.name = "Value")
+
+plt1 <- ggplot(Stat_data_m,
+               aes(x = Value, fill = Statistic)) +
+    geom_histogram(bins = 40) + theme_bw() +
+    scale_x_continuous(trans = "log2") +
+    facet_wrap(~Annotation, nrow = 1) + 
+    scale_fill_brewer(palette = 3, type = "qual") +
+    labs(x = "Counts", y = "Segments, #")
+
+plt2 <- ggplot(Stat_data,
+               aes(x = NegProbe, y = Q3, color = Annotation)) +
+    geom_abline(intercept = 0, slope = 1, lty = "dashed", color = "darkgray") +
+    geom_point() + guides(color = "none") + theme_bw() +
+    scale_x_continuous(trans = "log2") + 
+    scale_y_continuous(trans = "log2") +
+    theme(aspect.ratio = 1) +
+    labs(x = "Negative Probe GeoMean, Counts", y = "Q3 Value, Counts")
+
+plt3 <- ggplot(Stat_data,
+               aes(x = NegProbe, y = Q3 / NegProbe, color = Annotation)) +
+    geom_hline(yintercept = 1, lty = "dashed", color = "darkgray") +
+    geom_point() + theme_bw() +
+    scale_x_continuous(trans = "log2") + 
+    scale_y_continuous(trans = "log2") +
+    theme(aspect.ratio = 1) +
+    labs(x = "Negative Probe GeoMean, Counts", y = "Q3/NegProbe Value, Counts")
+
+btm_row <- plot_grid(plt2, plt3, nrow = 1, labels = c("B", ""),
+                     rel_widths = c(0.43,0.57))
+plot_grid(plt1, btm_row, ncol = 1, labels = c("A", ""))
+
+```
+
+```{r}
+# Q3 norm (75th percentile) for WTA/CTA  with or without custom spike-ins
+target_demoData <- normalize(target_demoData ,
+                             norm_method = "quant", 
+                             desiredQuantile = .75,
+                             toElt = "q_norm")
+
+# Background normalization for WTA/CTA without custom spike-in
+target_demoData <- normalize(target_demoData ,
+                              norm_method = "neg", 
+                              fromElt = "exprs",
+                              toElt = "neg_norm")
+
+#Unlock the object and add the Quantile normalized data
+# rlang::env_unlock(target_demoData@assayData)
+# target_demoData@assayData$quant_norm <- norm.quantile
+
+# visualize the first 10 segments with each normalization method
+boxplot(exprs(target_demoData)[,1:50],
+        col = "#9EDAE5", main = "Raw Counts",
+        log = "y", names = 1:50, xlab = "Segment",
+        ylab = "Counts, Raw")
+
+boxplot(assayDataElement(target_demoData[,1:50], elt = "q_norm"),
+        col = "#2CA02C", main = "Q3 Norm Counts",
+        log = "y", names = 1:50, xlab = "Segment",
+        ylab = "Counts, Q3 Normalized")
+ 
+boxplot(assayDataElement(target_demoData[,1:50], elt = "neg_norm"),
+         col = "#FF7F0E", main = "Neg Norm Counts",
+         log = "y", names = 1:50, xlab = "Segment",
+       ylab = "Counts, Neg. Normalized")
+
+```
+
+
+```{r}
+
+genes_of_interest <- c('PTPRC', 'TMEM119', "CD68", "VEGFA", "ADM", "PDK1", "CA9")
+
+for(gene in genes_of_interest) {
+     p <- ggplot(pData(target_demoData),
+       aes(x = factor(IDHstatus, levels = c("IDHmut", "IDHwt")), fill = factor(Hypoxia, levels = c("normoxia", "low hypoxia", "high hypoxia", "NA")),
+           y = as.numeric(assayDataElement(target_demoData[gene, ],
+                                elt = "q_norm")))) +
+    geom_boxplot(outlier.shape = NA) +
+       geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0), aes(color=as.numeric(Microglia_percentage))) +
+       scale_color_gradient(low = "yellow2", high = "red2") +
+        labs(x = "Hypoxia region", y = paste(gene, "Expression"), fill = "Hypoxia class", color = "Microglia percentage") +
+        #scale_y_continuous(trans = "log2") +
+       scale_fill_manual(values = accent_8_colours) +
+    theme_bw()
+ 
+ show(p)
+ #ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/GeoMx data-analyysi/Expression in hypoxia classes/Combined_ROI_Q3/hypoxia_IDH_deconvolution_jitter/microglia_", gene, ".pdf", sep = ""))
+ 
+     p <- ggplot(pData(target_demoData),
+       aes(x = factor(IDHstatus, levels = c("IDHmut", "IDHwt")), fill = factor(Hypoxia, levels = c("normoxia", "low hypoxia", "high hypoxia", "NA")),
+           y = as.numeric(assayDataElement(target_demoData[gene, ],
+                                elt = "q_norm")))) +
+    geom_boxplot(outlier.shape = NA) +
+       geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0), aes(color=as.numeric(Macrophage_percentage))) +
+       scale_color_gradient(low = "yellow2", high = "red2") +
+        labs(x = "Hypoxia region", y = paste(gene, "Expression"), fill = "Hypoxia class", color = "Macrophage percentage") +
+        #scale_y_continuous(trans = "log2") +
+       scale_fill_manual(values = accent_8_colours) +
+    theme_bw()
+ 
+ show(p)
+ #ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/GeoMx data-analyysi/Expression in hypoxia classes/Combined_ROI_Q3/hypoxia_IDH_deconvolution_jitter/macrophage_", gene, ".pdf", sep = ""))
+ 
+}
+```
+
+## Gene set activity analysis 
+
+
+```{r}
+library(readxl)
+# load gene set excel
+gene_sets_df <- read_xlsx("C:/Users/is427866/Downloads/Gene_sets_for_Kevin_updated20112025.xlsx")
+
+# Filter DF if needed
+gene_sets_df <- gene_sets_df[,c(40,41,36,48,42,10,11,23,28,22)] #GeoMx
+#gene_sets_df <- gene_sets_df[,c(1,5,6,10,11,20,21,22,23,36,40,41,48,42,28,29)] #All gene sets
+
+gene_sets_list <- as.list(gene_sets_df)
+gene_sets_list <- lapply(gene_sets_list, function(x) x[!is.na(x)])
+
+```
+
+
+## Geneset activity AUCell
+
+```{r}
+library(AUCell)
+
+df <- assayDataElement(target_demoData, elt = "q_norm")
+
+# Convert expression matrix to rankings
+cells_rankings <- AUCell_buildRankings(df)
+
+# Calculate enrichment scores
+aucs <- AUCell_calcAUC(gene_sets_list, cells_rankings)
+  
+auc_df <- as.data.frame(t(getAUC(aucs)))
+
+geneset_scores <- auc_df
+
+
+```
+
+
+```{r}
+# Function to check which genes from a list are in a vector and save to dataframe
+check_genes_in_list <- function(gene_lists, gene_vector) {
+  # Find the maximum length of any gene set intersection
+  max_length <- 0
+  result_list <- list()
+  
+  # Loop through each gene list to find intersections
+  for (list_name in names(gene_lists)) {
+    # Get the gene list
+    current_list <- gene_lists[[list_name]]
+    
+    # Find genes that are in both the list and the vector
+    found_genes <- intersect(current_list, gene_vector)
+    
+    # Store the found genes for this list
+    result_list[[list_name]] <- found_genes
+    
+    # Update the maximum length if needed
+    max_length <- max(max_length, length(found_genes))
+  }
+  
+  # Create an empty dataframe with columns for each gene set
+  result_df <- data.frame(matrix(NA, nrow = max_length, ncol = length(gene_lists)))
+  colnames(result_df) <- names(gene_lists)
+  
+  # Fill the dataframe with found genes
+  for (list_name in names(gene_lists)) {
+    found_genes <- result_list[[list_name]]
+    if (length(found_genes) > 0) {
+      result_df[1:length(found_genes), list_name] <- found_genes
+    }
+  }
+  
+  return(result_df)
+}
+
+
+result_dataframe <- check_genes_in_list(gene_sets_list, rownames(df))
+
+#write.csv(result_dataframe, "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/GeoMx data-analyysi/Gene Sets/genes_found_in_data.csv")
+
+```
+
+```{r}
+hist(geneset_scores$Hypoxia_geneset, breaks = 50)
+```
+
+## P-values for geneset activity
+
+```{r}
+meta <- pData(target_demoData)
+
+geneset_scores <- auc_df
+geneset_scores$WellID <- gsub(".dcc", "", rownames(geneset_scores))
+
+plot_df <- merge(geneset_scores, meta, by.x="WellID", by.y="True_SampleID")
+#add hypoxia scores
+plot_df$Hypoxia <- NULL
+plot_df$Hypoxia <- c("normoxia")
+plot_df[which(plot_df$Hypoxia_geneset > 0.15),"Hypoxia"] <- "low hypoxia"
+plot_df[which(plot_df$Hypoxia_geneset > 0.3),"Hypoxia"] <- "high hypoxia"
+
+plot_df_long <- melt(plot_df, measure.vars = c(2:10)) #prev 2:50, geoMx 2:9, all genesets
+
+plot_df_long$group_for_plot_IDH_grade <- paste(plot_df_long$Hypoxia, plot_df_long$IDHstatus, sep=", ")
+
+test <- plot_df_long
+```
+
+```{r}
+# make the result table 
+ # res_table <- as.data.frame(matrix(ncol = 1, nrow = length(unique(test$variable))))
+ # rownames(res_table) <- unique(test$variable)
+ # colnames(res_table) <- c("Normoxia vs Low hypoxia, IDHwt")
+
+#test_sub <- test[which(test$group_for_plot_IDH_grade == "normoxia, IDHwt" | test$group_for_plot_IDH_grade == "low hypoxia, IDHwt"),]
+#test_sub <- test[which(test$group_for_plot_IDH_grade == "normoxia, IDHwt" | test$group_for_plot_IDH_grade == "high hypoxia, IDHwt"),]
+#test_sub <- test[which(test$group_for_plot_IDH_grade == "low hypoxia, IDHwt" | test$group_for_plot_IDH_grade == "high hypoxia, IDHwt"),]
+
+#test_sub <- test[which(test$group_for_plot_IDH_grade == "normoxia, IDHmut" | test$group_for_plot_IDH_grade == "low hypoxia, IDHmut"),]
+#test_sub <- test[which(test$group_for_plot_IDH_grade == "normoxia, IDHmut" | test$group_for_plot_IDH_grade == "high hypoxia, IDHmut"),]
+test_sub <- test[which(test$group_for_plot_IDH_grade == "low hypoxia, IDHmut" | test$group_for_plot_IDH_grade == "high hypoxia, IDHmut"),]
+
+
+#res_table$`Normoxia vs High hypoxia, IDHwt` <- NA
+#res_table$`Low hypoxia vs High hypoxia, IDHwt` <- NA
+
+#res_table$`Normoxia vs Low hypoxia, IDHmut` <- NA
+#res_table$`Normoxia vs High hypoxia, IDHmut` <- NA
+res_table$`Low hypoxia vs High hypoxia, IDHmut` <- NA
+
+
+p_values <- numeric(length(unique(test_sub$variable)))
+m <- 6
+
+for (ct in unique(test_sub$variable)) {
+   
+  sub <- subset(test_sub, test_sub$variable == ct)
+  print(ct)
+  
+  # Wilcoxon
+  res <- wilcox.test(value ~ group_for_plot_IDH_grade, data=sub)
+  text <- paste("W = ", res$statistic, ", p-value = ", res$p.value, sep = "")
+  #print(text)
+  
+  # Store p-value
+  p_values[ct] <- res$p.value
+  
+  n <- which(rownames(res_table) == ct)
+  res_table[n,m] <- text
+}
+
+# Apply p-value correction (Benjamini-Hochberg FDR)
+p_adjusted <- p.adjust(p_values, method = "BH")
+
+for (ct in unique(test_sub$variable)) {
+  n <- which(rownames(res_table) == ct)
+  res_table[n,m] <- paste(res_table[n,m], ", p.adj = ", p_adjusted[ct], sep = "")
+}
+
+res_table
+
+#write.csv(res_table, "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/GeoMx data-analyysi/Gene Sets/AUCell genesets/DatadrivenHypoxia_p_values_adj_manu_28012026.csv")
+
+```
+
+
+## Dotplot visualizations
+
+```{r, fig.width=8, fig.height=5}
+library(tidyverse)
+rownames(plot_df) <- plot_df$WellID
+
+# data <- as.data.frame(plot_df[,c(12,24,29,33,34,45,49,72,73,97,109)])
+# data <- as.data.frame(t(subset(data, IDHstatus == "IDHwt")))
+#data <- as.data.frame(plot_df[,c(11,37,38,45,39,33,24,12,74,86)])
+data <- as.data.frame(plot_df[,c(2,3,4,5,10,7,6,8,9,35,47)]) # GeoMx dotplot
+#data <- as.data.frame(plot_df[,c(2:8,10:17,41,53)])
+
+
+data <- as.data.frame(t(subset(data, IDHstatus == "IDHwt")))
+
+library(scales)  # For scaling functions
+
+# Function to scale data similar to Seurat's approach
+scale_seurat_style <- function(data_vector, max_value = 2.5) {
+  # In Seurat, expression values are typically capped at a maximum (often 2.5)
+  # and then scaled between 0 and 1
+  capped_values <- pmin(data_vector, max_value)
+  scaled_values <- rescale(capped_values, to = c(0, 1))
+  return(scaled_values)
+}
+
+# Assuming:
+# - Your dataframe is called 'data'
+# - Genes are rownames (including a row for "Hypoxia")
+# - All columns are samples
+
+# Store hypoxia information (it's a row in your dataframe)
+hypoxia_info <- data["Hypoxia", ]
+
+# Remove the hypoxia row and any other metadata rows from expression data
+metadata_rows <- c("Hypoxia", "IDHstatus")  # Replace with your actual metadata row names
+expression_data <- data[!rownames(data) %in% metadata_rows, ]
+
+# Convert to tidy format
+tidy_data <- expression_data %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(
+    cols = -gene,
+    names_to = "sample",
+    values_to = "expression"
+  )
+
+# Add hypoxia class for each sample (from the hypoxia row)
+tidy_data$hypoxia_class <- as.character(hypoxia_info[tidy_data$sample])
+tidy_data$expression <- as.numeric(tidy_data$expression)
+
+# Calculate statistics by gene and hypoxia class
+stats_by_group <- tidy_data %>%
+  group_by(gene, hypoxia_class) %>%
+  summarize(
+    # Mean expression (for color)
+    mean_expression = mean(expression, na.rm = TRUE),
+    # Fraction expressing (for size) - analogous to percentage of cells in Seurat
+    # Define a threshold for "expressed" (adjust as needed for your data)
+    pct_expressing = 1-sd(expression, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Apply Seurat-like scaling to expression values
+stats_by_group <- stats_by_group %>%
+  group_by(gene) %>%
+  mutate(
+    # Scale mean expression values for color (Seurat-style)
+    scaled_expression = scale_seurat_style(mean_expression)
+  ) %>%
+  ungroup()
+
+# Order genes by overall mean expression
+# gene_order <- tidy_data %>%
+#   group_by(gene) %>%
+#   summarize(mean_exp = mean(expression, na.rm = TRUE)) %>%
+#   arrange(desc(mean_exp)) %>%
+#   pull(gene)
+
+gene_order <- rownames(expression_data)
+
+# Apply the gene ordering
+stats_by_group$gene <- factor(stats_by_group$gene, levels = gene_order)
+
+# Set hypoxia class order
+hypoxia_order <- c("normoxia", "low hypoxia", "high hypoxia")  # Replace with your actual classes
+stats_by_group$hypoxia_class <- factor(stats_by_group$hypoxia_class, levels = hypoxia_order)
+
+# Create the plot (Seurat-style)
+dotplot <- ggplot(stats_by_group, aes(x = hypoxia_class, y = gene)) +
+  geom_point(aes(size = mean_expression, color = mean_expression)) +
+  scale_color_gradient(
+    name = "\nAverage Score", 
+    low = "lightgrey", 
+    high = "red",
+    # Seurat typically uses a sequential color scale from light to dark
+    guide = guide_colorbar(title.position = "top")
+  ) +
+  scale_size_continuous(
+    name = "Average Score", 
+    range = c(1, 8)
+  ) +
+  labs(
+    title = "Gene Expression by Hypoxia Class",
+    x = "Hypoxia Class", 
+    y = NULL  # Seurat typically doesn't label the y-axis
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    #panel.grid.major = element_blank(),  # Remove grid lines for cleaner look
+    #panel.grid.minor = element_blank(),
+    legend.position = "right",
+    legend.box = "vertical"
+  )
+
+# Display the plot
+print(dotplot)
+
+
+#ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/GeoMx data-analyysi/Gene Sets/AUCell genesets/datadrivenHypoxia_dotplot_IDHwt_new28012026_manu", ".pdf", sep = ""))
+
+```
+
+
