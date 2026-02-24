@@ -1,0 +1,394 @@
+---
+title: "Untitled"
+output:
+  pdf_document: default
+  html_document: default
+date: "2024-12-02"
+---
+
+```{r}
+library(tidyverse)
+library(cowplot)
+
+draw_label_theme <- function(label, theme = NULL, element = "text", ...) {
+  if (is.null(theme)) {
+    theme <- ggplot2::theme_get()
+  }
+  if (!element %in% names(theme)) {
+    stop("Element must be a valid ggplot theme element name")
+  }
+
+  elements <- ggplot2::calc_element(element, theme)
+
+  cowplot::draw_label(label, 
+                      fontfamily = elements$family,
+                      fontface = elements$face,
+                      colour = elements$color,
+                      size = elements$size,
+                      ...
+  )
+}
+
+load("/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/colours_accent_8.RData")
+```
+
+
+```{r}
+library(dplyr)
+library(readxl)
+
+TMA_df <- read.csv("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/Hypoxia_marker_validation/TMA_intensity_measurements.csv")
+
+meta_data <- read_xlsx("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/hypoxia_sample_metadata_withNew.xlsx")
+```
+
+```{r}
+#merge with meta_data
+TMA_df <- TMA_df[, c(1:8, grep("Cell.*mean", names(TMA_df)))]
+
+TMA_df$Core.identifier <- TMA_df$Image
+TMA_df$Core.identifier <- gsub("-", "", TMA_df$Core.identifier, fixed = T)
+TMA_df$Core.identifier <- gsub("A_", " ", TMA_df$Core.identifier, fixed = T)
+TMA_df$Core.identifier <- gsub("B_", " ", TMA_df$Core.identifier, fixed = T)
+TMA_df$Core.identifier <- gsub("ASTRO", "Astro ", TMA_df$Core.identifier, fixed = T)
+TMA_df$Core.identifier <- gsub("allglioma C", "Allglioma", TMA_df$Core.identifier, fixed = T)
+TMA_df$Core.identifier <- gsub(".tif", "", TMA_df$Core.identifier, fixed = T)
+
+meta_data$Core.identifier <- c(paste(meta_data$TMA, meta_data$`Image name`, sep = " "))
+
+TMA_with_meta <- merge(TMA_df, meta_data[,c(9,16)], by.x="Core.identifier", by.y="Core.identifier")
+
+temp <- meta_data[which(meta_data$Core.identifier %in% TMA_df$Core.identifier),]
+
+#combined_df <- rbind(TMA_with_meta, WSI_df)
+combined_df <- TMA_with_meta
+
+```
+
+
+```{r cars}
+df <- combined_df
+sub_df <- df[, grep("Cell.*mean", names(df))]
+sub_df <- sub_df[,c(1,3,5,6,8)] #check columns!
+sub_df <- sub_df[complete.cases(sub_df),]
+
+sub_df$hypoxia_class <- c("Normoxia")
+
+
+sub_df$hypoxia_class <- ifelse(sub_df$Cell..CA9.mean > 10, "High hypoxia",
+                              ifelse(sub_df$Cell..CA9.mean > 4, "Low hypoxia", 
+                                     sub_df$hypoxia_class))
+
+sub_df_validation <- sub_df
+```
+
+
+```{r}
+df <- combined_df
+sub_df <- df[,c(1:10,12,14,15,17,19)] #check columns!
+
+sub_df <- subset(sub_df, Parent != "Image")
+
+sub_df$hypoxia_class <- as.factor(sub_df$Parent)
+sub_df$hypoxia_class <- gsub("Non hypoxic", "Normoxia", sub_df$hypoxia_class)
+sub_df$hypoxia_class <- as.factor(sub_df$hypoxia_class)
+
+unique(sub_df$hypoxia_class)
+```
+
+
+```{r pressure}
+library(ggplot2)
+
+ggplot(sub_df, aes(x=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), y=`Cell..CA9.mean`)) + geom_violin() + ylim(0,40)
+ggplot(sub_df, aes(x=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), y=`Cell..PDK1.mean`)) + geom_violin() + ylim(0,40)
+ggplot(sub_df, aes(x=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), y=`Cell..ADM.mean`)) + geom_violin() + ylim(0,40)
+ggplot(sub_df, aes(x=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), y=`Cell..VEGFA.mean`)) + geom_violin() + ylim(0,40)
+ggplot(sub_df, aes(x=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), y=`Cell..IDH1.mean`)) + geom_violin() + ylim(0,40)
+```
+
+
+
+```{r}
+df <- df_allMarkers
+sub_df <- df[, grep("Cell.*mean", names(df))]
+sub_df <- sub_df[,1:9] #check columns!
+
+sub_df$hypoxia_class <- c("Normoxia")
+
+for (i in 1:length(sub_df$hypoxia_class)) {
+ if (sub_df[i,"Cell..CA9.mean"] > 4) {
+   sub_df[i,"hypoxia_class"] <- "Low hypoxia"
+ }
+   if (sub_df[i,"Cell..CA9.mean"] > 10) {
+   sub_df[i,"hypoxia_class"] <- "High hypoxia"
+ }
+}
+
+sub_df_allMarkers <- sub_df
+```
+
+# Calculate ratios to normoxia, cell level
+
+```{r}
+# Normalize data to normoxia, calculate relation to normoxia
+# suhde normoxiaan = intensiteetti / intensiteetti normoxiassa?
+
+ratio_df <- sub_df[0,]
+
+# For each sample, calculate the average expression in each hypoxia class
+
+avg_df_ADM <- aggregate(Cell..ADM.mean ~ Core.identifier + hypoxia_class + `IDH 0=WT, 1=MUT, NA`, data = sub_df, FUN = median, na.rm = TRUE)
+avg_df_Ca9 <- aggregate(Cell..CA9.mean ~ Core.identifier + hypoxia_class + `IDH 0=WT, 1=MUT, NA`, data = sub_df, FUN = median, na.rm = TRUE)
+avg_df_VEGFA <- aggregate(Cell..VEGFA.mean ~ Core.identifier + hypoxia_class + `IDH 0=WT, 1=MUT, NA`, data = sub_df, FUN = median, na.rm = TRUE)
+avg_df_PDK1 <- aggregate(Cell..PDK1.mean ~ Core.identifier + hypoxia_class + `IDH 0=WT, 1=MUT, NA`, data = sub_df, FUN = median, na.rm = TRUE)
+
+# Example list of data frames
+df_list <- list(avg_df_ADM, avg_df_Ca9, avg_df_VEGFA, avg_df_PDK1)
+
+# Merge all data frames in the list
+merged_df <- Reduce(function(x, y) merge(x, y, by = c("Core.identifier", "hypoxia_class", "IDH 0=WT, 1=MUT, NA")), df_list)
+merged_df <- subset(merged_df, hypoxia_class == "Normoxia")
+
+
+# calculate ratios for each cell
+for (core in unique(sub_df$Core.identifier)) {
+  
+  sub <- subset(sub_df, Core.identifier == core)
+  
+  divider_ADM <- merged_df[which(merged_df$Core.identifier == core),"Cell..ADM.mean"]
+  divider_CA9 <- merged_df[which(merged_df$Core.identifier == core),"Cell..CA9.mean"]
+  divider_VEGFA <- merged_df[which(merged_df$Core.identifier == core),"Cell..VEGFA.mean"]
+  divider_PDK1 <- merged_df[which(merged_df$Core.identifier == core),"Cell..PDK1.mean"]
+  
+  sub[,"ratio_ADM"] <- sub$Cell..ADM.mean / divider_ADM
+  sub[,"ratio_CA9"] <- sub$Cell..CA9.mean / divider_CA9
+  sub[,"ratio_VEGFA"] <- sub$Cell..VEGFA.mean / divider_VEGFA
+  sub[,"ratio_PDK1"] <- sub$Cell..PDK1.mean / divider_PDK1
+  
+  ratio_df <- rbind(ratio_df, sub)
+  
+}
+
+ratio_df <- subset(ratio_df, ratio_ADM != Inf)
+ratio_df <- subset(ratio_df, ratio_PDK1 != Inf)
+
+
+```
+
+# Visualize individual ratios
+
+```{r, fig.width=20, fig.height=5}
+library(ggridges)
+
+sub_wt <- subset(ratio_df, `IDH 0=WT, 1=MUT, NA` == "0")
+sub_mut <- subset(ratio_df, `IDH 0=WT, 1=MUT, NA` == "1")
+
+p2 <- ggplot(sub_wt, aes(x=`ratio_CA9`, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHwt") + scale_x_continuous(breaks=seq(0,15,0.5), limits = c(0,15)) 
+p1 <- ggplot(sub_mut, aes(x=`ratio_CA9`, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHmut") + scale_x_continuous(breaks=seq(0,15,0.5), limits = c(0,15)) 
+
+title <- ggdraw() +
+  draw_label_theme(paste("Cell type fractions in hypoxia class", sep = " "), 
+                   theme = theme_classic(), element = "plot.title",
+                   x = 0.05, hjust = 0, vjust = 1)
+
+plot_grid(title, NULL, p1,p2, ncol = 2, rel_heights = c(0.1, 1), rel_widths = c(1, 1))
+ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/mean_normalized_IDH.sep_CA9_ridgeplot.pdf")
+
+###############################
+
+p2 <- ggplot(sub_wt, aes(x=ratio_VEGFA, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHwt") + scale_x_continuous(breaks=seq(0,10,0.5), limits = c(0,10)) 
+p1 <- ggplot(sub_mut, aes(x=ratio_VEGFA, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHmut") + scale_x_continuous(breaks=seq(0,10,0.5), limits = c(0,10)) 
+
+title <- ggdraw() +
+  draw_label_theme(paste("Cell type fractions in hypoxia class", sep = " "), 
+                   theme = theme_classic(), element = "plot.title",
+                   x = 0.05, hjust = 0, vjust = 1)
+
+plot_grid(title, NULL, p1,p2, ncol = 2, rel_heights = c(0.1, 1), rel_widths = c(1, 1))
+ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/mean_normalized_IDH.sep_VEGFA_ridgeplot.pdf")
+
+##############################
+
+p2 <- ggplot(sub_wt, aes(x=ratio_ADM, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHwt") + scale_x_continuous(breaks=seq(0,10,0.5), limits = c(0,10)) 
+p1 <- ggplot(sub_mut, aes(x=ratio_ADM, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHmut") + scale_x_continuous(breaks=seq(0,10,0.5), limits = c(0,10)) 
+
+title <- ggdraw() +
+  draw_label_theme(paste("Cell type fractions in hypoxia class", sep = " "), 
+                   theme = theme_classic(), element = "plot.title",
+                   x = 0.05, hjust = 0, vjust = 1)
+
+plot_grid(title, NULL, p1,p2, ncol = 2, rel_heights = c(0.1, 1), rel_widths = c(1, 1))
+ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/mean_normalized_IDH.sep_ADM_ridgeplot.pdf")
+
+############################
+
+p2 <- ggplot(sub_wt, aes(x=ratio_PDK1, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHwt") + scale_x_continuous(breaks=seq(0,10,0.5), limits = c(0,10)) 
+p1 <- ggplot(sub_mut, aes(x=ratio_PDK1, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHmut") + scale_x_continuous(breaks=seq(0,10,0.5), limits = c(0,10)) 
+
+title <- ggdraw() +
+  draw_label_theme(paste("Cell type fractions in hypoxia class", sep = " "), 
+                   theme = theme_classic(), element = "plot.title",
+                   x = 0.05, hjust = 0, vjust = 1)
+
+plot_grid(title, NULL, p1,p2, ncol = 2, rel_heights = c(0.1, 1), rel_widths = c(1, 1))
+ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/mean_normalized_IDH.sep_PDK1_ridgeplot.pdf")
+
+```
+
+```{r, fig.width=15, fig.height=5}
+library(ggridges)
+
+sub_wt <- subset(ratio_df, `IDH 0=WT, 1=MUT, NA` == "0")
+sub_mut <- subset(ratio_df, `IDH 0=WT, 1=MUT, NA` == "1")
+
+p2 <- ggplot(sub_wt, aes(x=log(ratio_CA9+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHwt") + scale_x_continuous(breaks=seq(0,3,0.5)) 
+p1 <- ggplot(sub_mut, aes(x=log(ratio_CA9+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHmut") + scale_x_continuous(breaks=seq(0,3,0.5)) 
+
+title <- ggdraw() +
+  draw_label_theme(paste("Cell type fractions in hypoxia class", sep = " "), 
+                   theme = theme_classic(), element = "plot.title",
+                   x = 0.05, hjust = 0, vjust = 1)
+
+plot_grid(title, NULL, p1,p2, ncol = 2, rel_heights = c(0.1, 1), rel_widths = c(1, 1))
+ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/mean_normalized_log_IDH.sep_CA9_ridgeplot.pdf")
+
+###############################
+
+p2 <- ggplot(sub_wt, aes(x=log(ratio_VEGFA+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHwt") + scale_x_continuous(breaks=seq(0,3,0.5)) 
+p1 <- ggplot(sub_mut, aes(x=log(ratio_VEGFA+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHmut") + scale_x_continuous(breaks=seq(0,3,0.5)) 
+
+title <- ggdraw() +
+  draw_label_theme(paste("Cell type fractions in hypoxia class", sep = " "), 
+                   theme = theme_classic(), element = "plot.title",
+                   x = 0.05, hjust = 0, vjust = 1)
+
+plot_grid(title, NULL, p1,p2, ncol = 2, rel_heights = c(0.1, 1), rel_widths = c(1, 1))
+ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/mean_normalized_log_IDH.sep_VEGFA_ridgeplot.pdf")
+
+##############################
+
+p2 <- ggplot(sub_wt, aes(x=log(ratio_ADM+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHwt") + scale_x_continuous(breaks=seq(0,4,0.5)) 
+p1 <- ggplot(sub_mut, aes(x=log(ratio_ADM+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHmut") + scale_x_continuous(breaks=seq(0,4,0.5)) 
+
+title <- ggdraw() +
+  draw_label_theme(paste("Cell type fractions in hypoxia class", sep = " "), 
+                   theme = theme_classic(), element = "plot.title",
+                   x = 0.05, hjust = 0, vjust = 1)
+
+plot_grid(title, NULL, p1,p2, ncol = 2, rel_heights = c(0.1, 1), rel_widths = c(1, 1))
+ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/mean_normalized_log_IDH.sep_ADM_ridgeplot.pdf")
+
+############################
+
+p2 <- ggplot(sub_wt, aes(x=log(ratio_PDK1+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHwt") + scale_x_continuous(breaks=seq(0,3,0.5)) 
+p1 <- ggplot(sub_mut, aes(x=log(ratio_PDK1+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("IDHmut") + scale_x_continuous(breaks=seq(0,3,0.5)) 
+
+title <- ggdraw() +
+  draw_label_theme(paste("Cell type fractions in hypoxia class", sep = " "), 
+                   theme = theme_classic(), element = "plot.title",
+                   x = 0.05, hjust = 0, vjust = 1)
+
+plot_grid(title, NULL, p1,p2, ncol = 2, rel_heights = c(0.1, 1), rel_widths = c(1, 1))
+ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/mean_normalized_log_IDH.sep_PDK1_ridgeplot.pdf")
+
+```
+
+
+```{r, fig.width=10, fig.height=6}
+library(ggridges)
+
+ggplot(ratio_df, aes(x=`ratio_CA9`, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("CA9 intensity normalized to normoxia") + scale_x_continuous(breaks=seq(0,15,0.5), limits = c(0,15)) 
+
+#ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/median_normalized_CA9_ridgeplot.pdf")
+
+###############################
+
+ggplot(ratio_df, aes(x=ratio_VEGFA, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("VEGFA intensity normalized to normoxia") + scale_x_continuous(breaks=seq(0,10,0.5), limits = c(0,10)) 
+
+#ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/median_normalized_VEGFA_ridgeplot.pdf")
+
+##############################
+
+ggplot(ratio_df, aes(x=ratio_ADM, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("ADM intensity normalized to normoxia") + scale_x_continuous(breaks=seq(0,10,0.5), limits = c(0,10)) 
+
+#ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/median_normalized_ADM_ridgeplot.pdf")
+
+############################
+
+ggplot(ratio_df, aes(x=ratio_PDK1, y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("PDK1 intensity normalized to normoxia") + scale_x_continuous(breaks=seq(0,10,0.5), limits = c(0,10)) 
+
+#ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/median_normalized_PDK1_ridgeplot.pdf")
+
+
+
+## LOG scaled
+############################
+ggplot(ratio_df, aes(x=log(ratio_CA9+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("CA9 intensity normalized to normoxia") + scale_x_continuous(breaks=seq(0,4,0.5), limits = c(0,4)) 
+
+#ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/median_normalized_Log_CA9_ridgeplot.pdf")
+
+###############################
+
+ggplot(ratio_df, aes(x=log(ratio_VEGFA+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("VEGFA intensity normalized to normoxia") + scale_x_continuous(breaks=seq(0,3,0.5), limits = c(0,3)) 
+
+#ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/median_normalized_Log_VEGFA_ridgeplot.pdf")
+
+##############################
+
+ggplot(ratio_df, aes(x=log(ratio_ADM+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("ADM intensity normalized to normoxia") + scale_x_continuous(breaks=seq(0,3,0.5), limits = c(0,3)) 
+
+#ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/median_normalized_Log_ADM_ridgeplot.pdf")
+
+############################
+
+ggplot(ratio_df, aes(x=log(ratio_PDK1+1), y=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("PDK1 intensity normalized to normoxia") + scale_x_continuous(breaks=seq(0,3,0.5), limits = c(0,3)) 
+
+#ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/median_normalized_Log_PDK1_ridgeplot.pdf")
+
+```
+
+# Melt the dataframe to have all the markers in one column -> in one figure
+```{r, fig.width=10, fig.height=8}
+library(ggridges)
+library(reshape2, lib.loc = "/usr/local/lib/R/site-library")
+
+data_long <- melt(ratio_df[,c(1,15:20)], c("Core.identifier", "IDH 0=WT, 1=MUT, NA", "hypoxia_class"))
+data_long$marker_hypoxia <- paste(data_long$variable, data_long$hypoxia_class, sep = "_")
+
+
+ggplot(data_long, aes(x=value, y=factor(marker_hypoxia, levels = c("ratio_PDK1_High hypoxia", "ratio_PDK1_Low hypoxia", "ratio_PDK1_Normoxia", "ratio_VEGFA_High hypoxia", "ratio_VEGFA_Low hypoxia", "ratio_VEGFA_Normoxia", "ratio_ADM_High hypoxia", "ratio_ADM_Low hypoxia", "ratio_ADM_Normoxia", "ratio_CA9_High hypoxia", "ratio_CA9_Low hypoxia", "ratio_CA9_Normoxia")), fill=factor(marker_hypoxia, levels = c("ratio_PDK1_High hypoxia", "ratio_PDK1_Low hypoxia", "ratio_PDK1_Normoxia", "ratio_VEGFA_High hypoxia", "ratio_VEGFA_Low hypoxia", "ratio_VEGFA_Normoxia", "ratio_ADM_High hypoxia", "ratio_ADM_Low hypoxia", "ratio_ADM_Normoxia", "ratio_CA9_High hypoxia", "ratio_CA9_Low hypoxia", "ratio_CA9_Normoxia")))) + geom_density_ridges() + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("Intensity normalized to normoxia") + scale_x_continuous(breaks=seq(0,10,0.5), limits = c(0,10)) 
+#ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/All_mean_normalized_ridgeplot.pdf")
+
+
+ggplot(data_long, aes(x=log(value+1), y=factor(marker_hypoxia, levels = c("ratio_PDK1_High hypoxia", "ratio_PDK1_Low hypoxia", "ratio_PDK1_Normoxia", "ratio_VEGFA_High hypoxia", "ratio_VEGFA_Low hypoxia", "ratio_VEGFA_Normoxia", "ratio_ADM_High hypoxia", "ratio_ADM_Low hypoxia", "ratio_ADM_Normoxia", "ratio_CA9_High hypoxia", "ratio_CA9_Low hypoxia", "ratio_CA9_Normoxia")), fill=factor(hypoxia_class, levels = c("Normoxia", "Low hypoxia", "High hypoxia")))) + guides(fill=guide_legend(title="Hypoxia class")) + geom_density_ridges() + theme_ridges()  + ylab("Hypoxia class") + ggtitle("Intensity normalized to normoxia") + scale_x_continuous(breaks=seq(0,3.25,0.5), limits = c(0,3.25)) + scale_fill_manual(values=accent_8_colours)
+#ggsave("/scratch/svc_td_cri/Multiplex/Old_narvi/hypoxia/intensities/figures/ridgeplots31032025/All_median_normalized_Log_ridgeplot.pdf")
+
+
+#ggplot(data_long, aes(x=log(value+1), y=factor(marker_hypoxia, levels = c("ratio_PDK1_High hypoxia", "ratio_PDK1_Low hypoxia", "ratio_PDK1_Normoxia", "ratio_VEGFA_High hypoxia", "ratio_VEGFA_Low hypoxia", "ratio_VEGFA_Normoxia", "ratio_ADM_High hypoxia", "ratio_ADM_Low hypoxia", "ratio_ADM_Normoxia", "ratio_CA9_High hypoxia", "ratio_CA9_Low hypoxia", "ratio_CA9_Normoxia")), fill=stat(x))) + theme_ridges() + theme(legend.position = "none") + ylab("Hypoxia class") + ggtitle("Intensity normalized to normoxia") + scale_x_continuous(breaks=seq(0,4,0.5), limits = c(0,4)) + geom_density_ridges_gradient() + scale_fill_viridis_c(name = "Density", option = "A")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
