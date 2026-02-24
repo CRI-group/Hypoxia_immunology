@@ -1,0 +1,718 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-11-21"
+---
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(hdf5r)
+library(reshape2)
+library(colorRamps)
+library(SeuratDisk)
+library(reticulate)
+
+load("C:/Users/is427866/Documents/hypoxia/data/colours_accent_8.RData")
+```
+
+```{r}
+samples <- c(
+  #"UKF265_T_ST",
+  "UKF334_T_ST",
+  #"UKF334_C_ST",
+  "UKF313_T_ST",
+  #"UKF313_C_ST",
+  "UKF304_T_ST",
+  "UKF296_T_ST",
+  "UKF275_T_ST",
+  # # #"UKF270_IDHMutant_T_ST",
+  "UKF269_T_ST",
+  # # #"UKF268_IDHMutant_T_ST",
+  "UKF266_T_ST",
+  #"UKF265_C_ST", # no 24 bins -> 15 bins?
+  "UKF262_T_ST",
+  "UKF260_T_ST",
+  "UKF259_T_ST",
+  #"UKF259_C_ST",
+  #"UKF256_TI_ST",
+  #"UKF256_TC_ST", # corrupted?
+  #"UKF256_C_ST",
+  "UKF255_T_ST",
+  "UKF251_T_ST",
+  "UKF248_T_ST",
+  #"UKF248_C_ST",
+  "UKF243_T_ST",
+  "UKF242_T_ST"#,
+  #"UKF241_C_ST",
+  #"UKF242_C_ST"
+)
+
+#samples <- c("UKF265_T_ST","UKF334_T_ST")
+
+
+gene_sets <- readxl::read_xlsx("C:/Users/is427866/Downloads/Gene_sets_for_Kevin_updated20112025_Visium.xlsx")
+gene_sets_list <- as.list(gene_sets)
+gene_sets_list <- lapply(gene_sets_list, function(x) x[!is.na(x)])
+
+```
+
+
+
+```{r, fig.width=10}
+# Initialize empty list to store scores
+#all_scores_list <- list()
+
+bin_n <- 24
+
+for (sample_id in samples) {
+  print(sample_id)
+  
+  data_dir <- paste("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/10XVisium/#", sample_id, "/outs/", sep = "")
+  
+  if (file.exists(paste("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/normalized_seurat_objs/", sample_id, ".RDS", sep=""))) {
+    
+    visium_obj <- readRDS(visium_obj, file=paste("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/normalized_seurat_objs/", sample_id, ".RDS", sep=""))
+    
+    # Remove old genesets
+    visium_obj@meta.data[8:52] <- NULL
+
+        # Geneset scoring
+    visium_obj <- AddModuleScore(visium_obj, features = gene_sets_list, name = colnames(gene_sets), nbin = bin_n)
+    colnames(visium_obj@meta.data)
+    colnames(visium_obj@meta.data)[8:52] <- colnames(gene_sets)
+    
+  } else {
+  
+    visium_obj <- Load10X_Spatial(
+    data.dir = data_dir,
+    filename = "filtered_feature_bc_matrix.h5", # optional if using HDF5
+    assay = "Spatial",
+    slice = "slice1" # optional name for the tissue section
+  )
+    visium_obj
+    
+    #filter spots
+    # Filter spots with at least 500 genes AND genes present in at least 5 spots
+    visium_obj <- subset(
+    visium_obj,
+    subset = nFeature_Spatial >= 500,  # spots with >= 500 genes
+    features = rownames(visium_obj)[rowSums(GetAssayData(visium_obj, slot = "counts") > 0) > 5]  # genes in > 5 spots
+    
+  )
+    visium_obj
+    
+    plot1 <- VlnPlot(visium_obj, features = "nCount_Spatial", pt.size = 0.1) + NoLegend()
+    plot2 <- SpatialFeaturePlot(visium_obj, features = "nCount_Spatial") + theme(legend.position = "right")
+    print(wrap_plots(plot1, plot2))
+    ggsave(paste("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/figures/", sample_id, "_QC_plots.pdf"))
+  
+    #Normalization
+    visium_obj <- SCTransform(visium_obj, assay = "Spatial", verbose = FALSE, seed.use=42)
+    
+    # Gene plotting
+    #SpatialFeaturePlot(visium_obj, features = c("CA9", "ADM"))
+    #SpatialFeaturePlot(visium_obj, features = c("PDK1", "VEGFA"))
+    
+    # PCA and clustering
+    visium_obj <- RunPCA(visium_obj, assay = "SCT", verbose = FALSE)
+    ElbowPlot(visium_obj)
+    ggsave(paste("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/figures/", sample_id, "_elbow.pdf"))
+    
+    visium_obj <- FindNeighbors(visium_obj, reduction = "pca", dims = 1:15)
+    visium_obj <- FindClusters(visium_obj, verbose = FALSE)
+    visium_obj <- RunUMAP(visium_obj, reduction = "pca", dims = 1:15)
+    
+    p1 <- DimPlot(visium_obj, reduction = "umap", label = TRUE)
+    p2 <- SpatialDimPlot(visium_obj, label = TRUE, label.size = 3)
+    print(p1 + p2)
+    ggsave(paste("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/figures/", sample_id, "_clusters.pdf"))
+    
+    # Geneset scoring
+    visium_obj <- AddModuleScore(visium_obj, features = gene_sets_list, name = colnames(gene_sets), nbin = bin_n)
+    colnames(visium_obj@meta.data)
+    colnames(visium_obj@meta.data)[8:52] <- colnames(gene_sets)
+    
+    print(SpatialFeaturePlot(visium_obj, features = c("Hypoxia_geneset", "HLA_genes")))
+    
+    # Save processed samples separately
+    saveRDS(visium_obj, file=paste("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/normalized_seurat_objs/", sample_id, ".RDS", sep=""))
+  
+  }
+  
+    # Extract metadata with geneset scores
+  metadata <- visium_obj@meta.data
+  metadata$sample_name <- sample_id  # Add sample identifier
+  metadata$spot_barcode <- rownames(metadata)  # Preserve spot barcodes
+  
+  # Store in list
+  all_scores_list[[sample_id]] <- metadata
+
+  }
+
+# Combine all scores into one dataframe
+combined_scores <- do.call(rbind, all_scores_list)
+
+# Save combined scores
+write.csv(combined_scores, "S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/combined_geneset_scores_second.csv", row.names = FALSE)
+saveRDS(all_scores_list, "S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/geneset_scores.RDS")
+  
+
+
+```
+
+
+```{r}
+# Rerun the addModuleScore with same bin but lower control genes
+all_scores_list <- list()
+
+for (sample_id in samples) {
+  print(sample_id)
+    
+  visium_obj <- readRDS(visium_obj, file=paste("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/normalized_seurat_objs/", sample_id, ".RDS", sep=""))
+  
+  # Remove old genesets
+  #visium_obj@meta.data[8:52] <- NULL
+  
+  #Save Visium data without the scores
+  #saveRDS(visium_obj, file=paste("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/normalized_seurat_objs/", sample_id, ".RDS", sep=""))
+
+  # Geneset scoring
+  visium_obj <- AddModuleScore(visium_obj, features = gene_sets_list, name = colnames(gene_sets), nbin = 15, ctrl=80, search = T)
+  colnames(visium_obj@meta.data)
+  colnames(visium_obj@meta.data)[8:41] <- colnames(gene_sets)
+  
+  # Extract metadata with geneset scores
+  metadata <- visium_obj@meta.data
+  metadata$sample_name <- sample_id  # Add sample identifier
+  metadata$spot_barcode <- rownames(metadata)  # Preserve spot barcodes
+  
+  # Store in list
+  all_scores_list[[sample_id]] <- metadata
+  
+  #Save the Visium data with the scores
+  saveRDS(visium_obj, file=paste("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/normalized_seurat_objs/withGenesetScores/", sample_id, "_bin15_ctrl_80.RDS", sep=""))
+  
+  }
+
+# Combine all scores into one dataframe
+combined_scores <- do.call(rbind, all_scores_list)
+
+# Save combined scores
+write.csv(combined_scores, "S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/combined_geneset_scores_Bin15_ctrl80_25112025.csv", row.names = FALSE)
+saveRDS(all_scores_list, "S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/geneset_scores_Bin15_ctrl80_25112025.RDS")
+
+
+```
+
+
+#Create merged Seurat for Visualization purposes
+
+```{r}
+
+seurat_list <- list()
+
+for (sample_id in samples) {
+  print(sample_id)
+    
+  visium_obj <- readRDS(paste("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/normalized_seurat_objs/withGenesetScores/", sample_id, "_bin15_ctrl_80.RDS", sep=""))
+  visium_obj@meta.data$sample_name <- sample_id  # Add sample identifier
+  visium_obj@meta.data$spot_barcode <- rownames(visium_obj@meta.data)  # Preserve spot barcode
+  
+  seurat_list[[sample_id]] <- visium_obj
+  
+}
+
+merged_seurat <- merge(x = seurat_list[[1]], y = seurat_list[2:15])
+#saveRDS(merged_seurat, "S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/combined_Visiums_Seurat_Bin15_ctrl80_TumorOnly_03122025.RDS")
+  
+```
+
+
+```{r}
+#Read in the combined seurat
+
+merged_seurat <- readRDS("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/combined_Visiums_Seurat_Bin15_ctrl80_TumorOnly_03122025.RDS")
+
+# Create hypoxia classes into the Seurat object
+merged_seurat@meta.data$hypoxia_class <- cut(
+  merged_seurat@meta.data$Hypoxia_geneset,
+  breaks = c(-Inf, 0, 0.24, Inf),
+  labels = c("normoxia", "low hypoxia", "high hypoxia"),
+  right = FALSE
+)
+
+merged_seurat@meta.data$sample_hypoxia_class <- paste(merged_seurat@meta.data$sample_name, merged_seurat@meta.data$hypoxia_class, sep = "_")
+
+```
+
+
+#Geneset analysis
+```{r}
+# load genesets
+combined_scores <- read.csv("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/combined_geneset_scores_Bin15_ctrl80_25112025.csv")
+
+#Filter combined scores to contain only tumor samples
+combined_scores <- subset(combined_scores, combined_scores$sample_name %in% samples)
+
+unique(combined_scores$sample_name)
+
+#Filter the df to contain only the desired genesets
+
+
+```
+
+
+```{r}
+# Hypoxia score histogram
+hist(combined_scores$Hypoxia_geneset, breaks = 150) + ylim(0,1000) + xlim(-0.25, 1)+ abline(v=c(0.16, 0.24), col = c("orange", "blue")) 
+
+# assign hypoxia categories
+combined_scores$hypoxia_class <- cut(
+  combined_scores$Hypoxia_geneset,
+  breaks = c(-Inf, -0.18, 0, 0.16, Inf),
+  labels = c("true_normoxia", "normoxia", "low hypoxia", "high hypoxia"),
+  right = FALSE
+)
+
+# assign hypoxia categories
+combined_scores$hypoxia_class <- cut(
+  combined_scores$Hypoxia_geneset,
+  breaks = c(-Inf, 0, 0.24, Inf),
+  labels = c("normoxia", "low hypoxia", "high hypoxia"),
+  right = FALSE
+)
+
+```
+
+```{r}
+
+#Plot geneset activities as violin plots
+plot_df <- melt(combined_scores, measure.vars = c(8:41))
+
+for (gs in unique(plot_df$variable)) {
+  sub <- subset(plot_df, variable == gs)
+  
+  p <- ggplot(sub, aes(x=hypoxia_class, y=value)) + 
+    geom_violin() + 
+    stat_summary(fun=median, geom="point", size=2, color="red") + 
+    labs(title=gs,x="Hypoxia Class", y = "Geneset scores") #+ 
+  # geom_jitter(position = position_jitter(0.2, 0)) 
+  
+  print(p)
+  #ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Visium_Ravi/Figures/violin_3_hypoxia_classes_TumorOnly/", gs, ".pdf", sep=""))
+  #ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Visium_Ravi/Figures/violin_3_hypoxia_classes_TumorOnly/", gs, ".png", sep=""))
+}
+
+```
+
+
+# Dotplots
+
+```{r, fig.width=9, fig.height=7}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Pivot using column positions instead of column name pattern
+# plot_data <- combined_scores %>%
+#   pivot_longer(cols = 8:41, 
+#                names_to = "module", 
+#                values_to = "score")
+
+plot_data <- combined_scores %>%
+  pivot_longer(cols = c(34,35,30,36,24,11,14,17,12), #c(8,10,15) <- TNF #c(34,30,36,24,11,14,17,12) <- fig3
+               names_to = "module", 
+               values_to = "score")
+
+# Calculate summary statistics for dotplot
+dot_data <- plot_data %>%
+  group_by(hypoxia_class, module) %>%
+  summarise(
+    avg_score = mean(score, na.rm = TRUE),
+    pct_expressed = sum(score > 0) / n() * 100,
+    .groups = "drop"
+  )
+
+# Preserve the order of modules as specified
+module_order <- names(combined_scores)[c(34,35,30,36,24,11,14,17,12)]
+dot_data$module <- factor(dot_data$module, levels = module_order)
+
+# Create Seurat-style dotplot
+ggplot(dot_data, aes(x = module, y = hypoxia_class)) +
+  geom_point(aes(size = pct_expressed, color = avg_score)) +
+  scale_color_gradient2(low = "blue", mid = "#D3d3d3", high = "red", 
+                        midpoint = 0, name = "Avg Score") +
+  scale_size_continuous(name = "% Expressed", range = c(1, 10)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        axis.title = element_blank()) +
+  labs(title = "Geneset Scores by Hypoxia Class")
+
+#ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Visium_Ravi/Figures/dotplots/dotplot_fig3_TumorOnly_28012026", ".pdf", sep=""))
+
+```
+
+
+
+# Statistics
+
+```{r}
+# prep data
+
+test <- melt(combined_scores, measure.vars = c(34,35,30,36,24,11,14,17,12)) #34,30,36,24,11,14,17,12
+
+```
+
+
+```{r}
+# make the result table 
+# res_table <- as.data.frame(matrix(ncol = 1, nrow = length(unique(test$variable))))
+# rownames(res_table) <- unique(test$variable)
+# colnames(res_table) <- c("Normoxia vs Low hypoxia")
+
+#test_sub <- test[which(test$hypoxia_class == "normoxia" | test$hypoxia_class == "low hypoxia"),]
+#test_sub <- test[which(test$hypoxia_class == "normoxia" | test$hypoxia_class == "high hypoxia"),]
+test_sub <- test[which(test$hypoxia_class == "low hypoxia" | test$hypoxia_class == "high hypoxia"),]
+
+#res_table$`Normoxia vs High hypoxia` <- NA
+res_table$`Low hypoxia vs High hypoxia` <- NA
+
+p_values <- numeric(length(unique(test_sub$variable)))
+m <- 3
+
+for (ct in unique(test_sub$variable)) {
+   
+  sub <- subset(test_sub, test_sub$variable == ct)
+  print(ct)
+  
+  # Wilcoxon
+  res <- wilcox.test(value ~ hypoxia_class, data=sub)
+  text <- paste("W = ", res$statistic, ", p-value = ", res$p.value, sep = "")
+  #print(text)
+  
+  # Store p-value
+  p_values[ct] <- res$p.value
+  
+  n <- which(rownames(res_table) == ct)
+  res_table[n,m] <- text
+}
+
+# Apply p-value correction (Benjamini-Hochberg FDR)
+p_adjusted <- p.adjust(p_values, method = "BH")
+
+for (ct in unique(test_sub$variable)) {
+  n <- which(rownames(res_table) == ct)
+  res_table[n,m] <- paste(res_table[n,m], ", p.adj = ", p_adjusted[ct], sep = "")
+}
+
+res_table
+
+#write.csv(res_table, "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Visium_Ravi/Figures/dotplots/Wilcox_fig3Genesets_padj_28012026.csv")
+```
+
+
+# Spatial plots
+
+```{r}
+# read in a visium slide and do visualizations on it
+
+visium_object <- readRDS("S:/medi_cri_group_shared_sto-3581/narvi_datasets_rautajoki/projects/ravi_visium/normalized_seurat_objs/withGenesetScores/UKF275_T_ST_bin15_ctrl_80.RDS")
+
+# assign hypoxia categories
+visium_object@meta.data$hypoxia_class <- cut(
+  visium_object@meta.data$Hypoxia_geneset,
+  breaks = c(-Inf, 0, 0.24, Inf),
+  labels = c("normoxia", "low hypoxia", "high hypoxia"),
+  right = FALSE
+)
+
+SpatialFeaturePlot(visium_object, features = c("Hypoxia_geneset"), image.alpha = 0.1)
+
+my_colors <- c("true_normoxia" = "#7FC97F", 
+               "normoxia" = "#BEAED4", 
+               "low hypoxia" = "#C75792", 
+               "high hypoxia" = "#FDC086")
+
+my_colors <- c("normoxia" = "#7FC97F", 
+               "low hypoxia" = "#FDC086", 
+                "high hypoxia" = "#C75792")
+
+SpatialDimPlot(visium_object, 
+               label = TRUE, 
+               label.size = 3, 
+               group.by = "hypoxia_class", 
+               image.alpha = 0.1, 
+               cols = my_colors)
+
+
+```
+
+```{r, fig.width=30, fig.height=15}
+
+plots <- SpatialDimPlot(merged_seurat,
+  label = F,
+  group.by = "hypoxia_class",
+  image.alpha = 0.2,
+  cols = my_colors,
+  combine = FALSE,
+  pt.size.factor = 2.25
+)
+
+
+# Replace titles
+for (i in seq_along(plots)) {
+  plots[[i]] <- plots[[i]] + ggtitle(unique(merged_seurat@meta.data$sample_name)[i])
+}
+
+# Arrange in grid
+combined_plot <- wrap_plots(plots, ncol = 5, nrow = 3) +
+  plot_layout(guides = "collect")
+
+combined_plot
+ggsave("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Visium_Ravi/Figures/spatial_plots/hypoxia_classes_samples_alpha0.2_biggerDot_TumorOnly.pdf")
+
+```
+
+```{r, fig.width=30, fig.height=15}
+
+colnames(gene_sets) <- gsub("-", ".", colnames(gene_sets), fixed = T)
+
+for (gs in colnames(gene_sets)) {
+
+  vals <- FetchData(merged_seurat, vars = gs)
+  
+  global_min <- min(vals)
+  global_max <- max(vals)
+
+  
+  plots <- SpatialFeaturePlot(merged_seurat, 
+                              features = gs,
+                              image.alpha = 0.2,
+                              combine = F,
+                              pt.size.factor = 2.25
+)
+  
+  
+  # Replace titles
+  for (i in seq_along(plots)) {
+    plots[[i]] <- plots[[i]] + ggtitle(unique(merged_seurat@meta.data$sample_name)[i]) + scale_fill_gradient2(low="#5E4FA2", mid="#E6F598", high="#D53E4F",limits = c(global_min, global_max), na.value = "grey90")
+  }
+  
+  # Arrange in grid
+  combined_plot <- wrap_plots(plots, ncol = 5, nrow = 3) +
+  plot_layout(guides = "collect")
+  
+  n <- gsub(" ", "_", gs)
+  
+  print(combined_plot)
+  ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Visium_Ravi/Figures/spatial_plots/genesets_TumorOnly/", n, "_alpha0.2.pdf", sep=""))
+
+}
+```
+
+
+```{r}
+# Load required libraries
+library(rcompanion)  # For cliffDelta function
+library(ggplot2)     # For plotting
+library(dplyr)       # For data manipulation
+library(tidyr)       # For data reshaping
+
+#-----------------------------------------
+# 1. Function to calculate Cliff's Delta for hypoxia groups
+#-----------------------------------------
+
+# Function to calculate Cliff's Delta for hypoxia groups
+# df: dataframe with samples as rows
+# score_cols: vector of column names (gene sets) to analyze
+# hypoxia_col: name of column containing hypoxia classification
+calculate_cliff_delta_hypoxia <- function(df, 
+                                          score_cols, 
+                                          hypoxia_col = "Hypoxia") {
+  
+  # Get all hypoxia groups
+  hypoxia_groups <- unique(df[[hypoxia_col]])
+  
+  # Get all possible pairs of hypoxia groups
+  group_pairs <- combn(hypoxia_groups, 2, simplify = FALSE)
+  
+  # Pre-allocate results list for speed
+  n_comparisons <- length(score_cols) * length(group_pairs)
+  results_list <- vector("list", n_comparisons)
+  idx <- 1
+  
+  # For each gene set score
+  for (score in score_cols) {
+    
+    # For each pair of hypoxia groups
+    for (pair in group_pairs) {
+      group1 <- pair[1]
+      group2 <- pair[2]
+      
+      # Extract scores for each hypoxia group
+      scores_group1 <- df[df[[hypoxia_col]] == group1, score]
+      scores_group2 <- df[df[[hypoxia_col]] == group2, score]
+      
+      # Skip if either group has too few samples
+      if (length(scores_group1) < 3 || length(scores_group2) < 3) {
+        message(paste("Skipping comparison for", score, ":", group1, "vs", group2, 
+                     "- insufficient data points"))
+        idx <- idx + 1
+        next
+      }
+      
+      # Calculate Cliff's Delta
+      cd_result <- tryCatch({
+        cd <- cliffDelta(x = scores_group1, 
+                       y = scores_group2,
+                       ci = TRUE,       # Calculate confidence interval
+                       conf = 0.95,     # 95% confidence interval
+                       digits = 3)      # Round to 3 decimal places
+        cd
+      }, error = function(e) {
+        message(paste("Error calculating Cliff's Delta for", score, 
+                     "between", group1, "and", group2, ":", e$message))
+        return(NA)
+      })
+      
+      # Calculate wilcoxon test
+      wilcoxon_res <- tryCatch({
+        wilcox.test(scores_group1, scores_group2)
+      }, error = function(e) {
+        list(p.value = NA)
+      })
+      
+      # If calculation was successful, add to results
+      if (!is.na(cd_result)[1]) {
+        results_list[[idx]] <- data.frame(
+          gene_set_name = score,
+          group1 = group1,
+          group2 = group2,
+          cliff_delta = cd_result$Cliff.delta[1],
+          conf_low = cd_result$lower.ci[1],
+          conf_high = cd_result$upper.ci[1],
+          n_group1 = length(scores_group1),
+          n_group2 = length(scores_group2),
+          wilcoxon_pvalue = wilcoxon_res$p.value,
+          stringsAsFactors = FALSE
+        )
+      }
+      
+      idx <- idx + 1
+    }
+  }
+  
+  # Combine all results at once (much faster than repeated rbind)
+  all_results <- do.call(rbind, results_list[!sapply(results_list, is.null)])
+  
+  return(all_results)
+}
+
+#-----------------------------------------
+# 2. Calculate effect sizes
+#-----------------------------------------
+
+# Specify which gene set scores to analyze
+# Example: gene_set_scores <- c("score1", "score2", "score3")
+# Or select specific columns: gene_set_scores <- names(your_df)[c(2,3,4,9,6,5,7,8)]
+
+gene_set_scores <- colnames(combined_scores)[c(34,35,30,36,24,11,14,17,12)] #c(34,35,30,36,24,11,14,17,12) #c(8,10,15)
+
+# Replace 'your_df' with your actual dataframe name
+# Replace 'Hypoxia' with your actual hypoxia column name if different
+effect_sizes <- calculate_cliff_delta_hypoxia(
+  df = combined_scores,
+  score_cols = gene_set_scores,
+  hypoxia_col = "hypoxia_class"
+)
+
+# Create a comparison label
+effect_sizes$comparison <- paste(effect_sizes$group1, "vs", effect_sizes$group2)
+
+# Adjust p-values for multiple testing
+effect_sizes$p_adjusted_BH <- p.adjust(effect_sizes$wilcoxon_pvalue, method = "BH")
+
+#-----------------------------------------
+# 3. Add significance labels
+#-----------------------------------------
+
+effect_sizes$significance <- ""
+effect_sizes$significance[effect_sizes$p_adjusted_BH < 0.05] <- "*"
+effect_sizes$significance[effect_sizes$p_adjusted_BH < 0.01] <- "**"
+effect_sizes$significance[effect_sizes$p_adjusted_BH < 0.001] <- "***"
+
+#-----------------------------------------
+# 4. Visualize the results
+#-----------------------------------------
+
+# Preserve the order of gene sets as they were specified
+effect_sizes$gene_set_name <- factor(effect_sizes$gene_set_name, 
+                                     levels = gene_set_scores)
+
+# Plot bar chart of effect sizes
+pdf(file = "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Visium_Ravi/effect_sizes_cliff_delta_hypoxia_fig4_28012026.pdf", height = 8, width = 20)
+ggplot(effect_sizes, aes(x = comparison, y = cliff_delta, fill = comparison)) +
+  geom_hline(yintercept = c(0.2, -0.2, 0.6, -0.6, 0.4, -0.4), 
+             linetype = "dashed", color = "darkgrey") +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_errorbar(aes(ymin = conf_low, ymax = conf_high), 
+              width = 0.2, position = position_dodge(0.9)) +
+  geom_text(aes(label = significance, y = ifelse(cliff_delta >= 0, 
+                                               cliff_delta + 0.1, 
+                                               cliff_delta - 0.1)), 
+           position = position_dodge(0.9), size = 4) +
+  facet_wrap(~gene_set_name, scales = "free_y", ncol = 4) +
+  labs(title = "Cliff's Delta Effect Sizes for Gene Set Scores Across Hypoxia Classes",
+    subtitle = "* p<0.05, ** p<0.01, *** p<0.001 (BH-adjusted Wilcoxon)\n|d| < 0.2: negligible, 0.2 ≤ |d| < 0.4: small, 0.4 ≤ |d| < 0.6: medium, |d| ≥ 0.6: large",
+     x = "",
+     y = "Cliff's Delta",
+     fill = "Comparison") +
+  theme_minimal() +
+  scale_y_continuous(breaks = c(-0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6), 
+                     minor_breaks = c()) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        legend.position = "bottom")
+dev.off()
+
+# Create a volcano plot (effect size vs. significance)
+volcano_data <- effect_sizes %>%
+  mutate(log10_p = -log10(p_adjusted_BH),
+         significant = ifelse(p_adjusted_BH < 0.05, "Significant", "Not significant"))
+
+# Plot volcano plot
+pdf(file = "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Visium_Ravi/volcano_plot_cliff_delta_hypoxia_fig4_28012026.pdf", height = 12, width = 16)
+ggplot(volcano_data, aes(x = cliff_delta, y = log10_p, color = significant)) +
+  geom_point(alpha = 0.7, size = 3) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
+  geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "grey40") +
+  scale_color_manual(values = c("Significant" = "red", "Not significant" = "grey")) +
+  facet_wrap(~gene_set_name) +
+  labs(title = "Volcano Plot: Effect Size vs. Statistical Significance",
+       x = "Cliff's Delta (Effect Size)",
+       y = "-log10(adjusted p-value)",
+       color = "Significance") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+dev.off()
+
+# Print summary
+cat("\nSummary of Results:\n")
+cat("Total comparisons:", nrow(effect_sizes), "\n")
+cat("Significant comparisons (p < 0.05):", sum(effect_sizes$p_adjusted_BH < 0.05), "\n")
+cat("\nEffect size distribution:\n")
+effect_sizes$magnitude <- cut(abs(effect_sizes$cliff_delta),
+                               breaks = c(0, 0.2, 0.4, 0.6, 1),
+                               labels = c("negligible", "small", "medium", "large"),
+                               include.lowest = TRUE)
+print(table(effect_sizes$magnitude))
+
+# Save results
+save(effect_sizes, file = "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Visium_Ravi/effect_sizes_cliff_delta_fig4_28012026.RData")
+write.csv(effect_sizes, file = "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/Visium_Ravi/effect_sizes_cliff_delta_fig4_28012026.csv", row.names = FALSE)
+
+```
+
+
