@@ -1,0 +1,609 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-10-13"
+---
+
+```{r}
+load("C:/Users/is427866/Documents/hypoxia/data/colours_accent_8.RData")
+```
+
+Select which dataset is loaded by commenting out
+
+```{r}
+# Microglia combatseq + DESEq2 condition
+load("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/In vitro validations/datasets/count_matrix_Combatseq_DE_protein_coding_featureCounts_all2_microglia_multimapped_ignored_gene_level_counts.RData")
+microglia_counts <- count_matrix_mor_normed
+
+# # Macrophages Combatseq + DESEq2 condition only 24h samples
+ load("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/In vitro validations/datasets/adjusted_count_matrix_DESEq2_protein_coding_featureCounts_all2_macrophages_multimapped_ignored_gene_level_counts_only24h.RData")
+ macrophages24h <- count_matrix_mor_normed
+
+#normalised together part 2
+load("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/In vitro validations/datasets/count_matrix_Combatseq_DE_protein_coding_featureCounts_all2_microglia_macrophages_combatseq_separately_multimapped_ignored_gene_level_counts.RData")
+macros_micros <- count_matrix_mor_normed
+
+```
+
+
+```{r}
+gene_sets <- readxl::read_xlsx("C:/Users/is427866/Downloads/Gene_sets_for_Kevin_updated20112025.xlsx")
+
+```
+
+```{r}
+calculate_score = function(df) {
+    df <- df[apply(df, 1, var) > 0, , drop = FALSE]
+
+    z_score = t(scale(t(df)))
+    activity.z = colSums(z_score/sqrt(nrow(df)))
+  
+    return(activity.z)
+}
+
+```
+
+```{r}
+bulk <- macrophages24h
+
+res <- as.data.frame(matrix(nrow = 36, ncol = 59)) # microglia 33 macrophage 36 together 69
+rownames(res) <- colnames(bulk)
+colnames(res) <- colnames(gene_sets)
+
+for (coln in colnames(gene_sets)) {
+  gset <- unlist(gene_sets[, coln])
+  gset <- subset(gset, gset != "NA")
+  
+  # Filter to only genes present in bulk data
+  gset_present <- gset[gset %in% rownames(bulk)]
+  
+  # Check if any genes are present
+  if (length(gset_present) > 0) {
+    score_cc <- calculate_score(bulk[gset_present, ])
+    res[, coln] <- score_cc
+  } else {
+    # No genes from gene set found in bulk data
+    res[, coln] <- NA
+    print(warning(paste("No genes from gene set", coln, "found in bulk data")))
+  }
+}
+
+geneset_scores <- res
+```
+
+
+```{r}
+microglia_sample_order <- c(
+  "M_0_24h", "MG_0_1", "MG_0_2", "MG_0_N_24_1", "MG_0_N_24_4",
+  "M_1_24h", "MG_1_1", "MG_1_2", "MG_1_N_24_1", "MG_1_N_24_2", "MG_1_A_24_2", "MG_1_A_24_5", "MG_1_A_24_6",
+  "M_5_74_24h", "MG_5_74_1", "MG_5_74_2", "MG_5_N_24_1", "MG_5_N_24_2",
+  "M_5_64_24h", "MG_5_64_1", "MG_5_64_2", "MG_5_A_24_1", "MG_5_A_24_2",
+  "M_19_74_24h", "MG_19_74_1_1", "MG_19_74_1_2", "MG_19_N_24_1", "MG_19_N_24_3",
+  "M_19_64_24h", "MG_19_64_1", "MG_19_64_2", "MG_19_A_24_1", "MG_19_A_24_2"
+)
+
+
+macrophage_sample_order <- c(
+  "M2_0_1", "M2_0_2", "M2_0_24h", "M2_0_N_24_1", "M2_0_N_24_2",
+  "M2_1_1", "M2_1_2", "M2_1_24h", "M2_1_N_24_1", "M2_1_N_24_3", "M2_1_A_24_1", "M2_1_A_24_2", "M2_1_A_24_3", "M2_1_A_24_4",
+  "M2_5_74_1", "M2_5_74_2", "M2_5_74_24h", "M2_5_N_24_1", "M2_5_N_24_2",
+  "M2_5_A_24_1", "M2_5_A_24_2",
+  "M2_5_64_1", "M2_5_64_2", "M2_5_64_24h_merged",
+  "M2_19_74_1", "M2_19_74_2", "M2_19_74_24h", "M2_19_N_24_1", "M2_19_N_24_2",
+  "M2_19N24A1_1", "M2_19N24A1_3",
+  "M2_19_64_1", "M2_19_64_2", "M2_19_64_24h", "M2_19_A_24_1", "M2_19_A_24_2"
+)
+```
+
+
+```{r, fig.height=10, fig.width=10}
+library(stats)
+library(circlize)
+library(ComplexHeatmap)
+
+#col_fun = colorRamp2(c(-0.25, 0, 0.25), c("skyblue2", "#f3f3f3", "red3"))
+
+
+pdf("/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/gene_set_analysis/macrophage_heatmap_16102025.pdf", width = 18, height = 12)
+Heatmap(res, 
+        name = "Geneset scores",
+        cluster_rows = F,
+        cluster_columns = F,
+        row_order = macrophage_sample_order,
+        row_names_gp = gpar(fontsize = 10),
+        column_names_gp = gpar(fontsize = 10),
+        cell_fun = function(j, i, x, y, width, height, fill) {
+          # Format as: mean (second_value)
+          text_val <- sprintf("%.2f", res[i, j])
+          grid.text(text_val, x, y, 
+                   gp = gpar(fontsize = 8))
+          })
+
+dev.off()
+
+pdf("/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/in_vitro_bulkRNAseq_analysis/gene_set_analysis/macrophage_heatmap2_16102025.pdf", width = 25, height = 12)
+draw(Heatmap(res, 
+             cluster_rows = F, 
+             cluster_columns = FALSE,  
+             show_row_dend = TRUE, 
+             show_row_names = TRUE,
+             row_order = macrophage_sample_order,
+             row_names_gp = gpar(fontsize = 15),
+             column_title_gp = gpar(fontsize = 20), 
+             column_names_gp = gpar(fontsize = 15), 
+             row_names_side = "left", 
+             show_column_dend = TRUE, 
+             show_column_names = TRUE, 
+             name= "Genesets Microglia" , 
+             column_title = "test", 
+             column_names_rot = 45, 
+             row_dend_width = unit(30, "mm"), 
+             #top_annotation = column_ha,
+             cell_fun = function(j, i, x, y, width, height, fill) {
+                grid.text(sprintf("%.3f", res[i, j]), x, y, gp = gpar(fontsize = 8))
+              }), 
+         padding = unit(c(35, 2, 17, 2), "mm"),  # top, right, bottom, left
+         heatmap_legend_side = "left", annotation_legend_side = "left")
+dev.off()
+          
+```
+
+```{r}
+
+# Define sample groupings
+groups <- list(
+  MDM_0_oxygen = c("M2_0_1", "M2_0_2", "M2_0_24h", "M2_0_N_24_1", "M2_0_N_24_2"),
+  MDM_1_neutral = c("M2_1_1", "M2_1_2", "M2_1_24h", "M2_1_N_24_1", "M2_1_N_24_3"),
+  MDM_1_acidic = c("M2_1_A_24_1", "M2_1_A_24_2", "M2_1_A_24_3", "M2_1_A_24_4"),
+  MDM_5_neutral = c("M2_5_74_1", "M2_5_74_2", "M2_5_74_24h", "M2_5_N_24_1", "M2_5_N_24_2"),
+  MDM_5_acidic = c("M2_5_A_24_1", "M2_5_A_24_2", "M2_5_64_1", "M2_5_64_2", "M2_5_64_24h_merged"),
+  MDM_19_neutral = c("M2_19_74_1", "M2_19_74_2", "M2_19_74_24h", "M2_19_N_24_1", "M2_19_N_24_2", "M2_19N24A1_1", "M2_19N24A1_3"),
+  MDM_19_acidic = c("M2_19_64_1", "M2_19_64_2", "M2_19_64_24h", "M2_19_A_24_1", "M2_19_A_24_2"),
+  
+  
+  MG_0_oxygen = c("M_0_24h", "MG_0_1", "MG_0_2", "MG_0_N_24_1", "MG_0_N_24_4"),
+  MG_1_neutral = c("M_1_24h", "MG_1_1", "MG_1_2", "MG_1_N_24_1", "MG_1_N_24_2"),
+  MG_1_acidic = c("MG_1_A_24_2", "MG_1_A_24_5", "MG_1_A_24_6"),
+  MG_5_neutral = c("M_5_74_24h", "MG_5_74_1", "MG_5_74_2", "MG_5_N_24_1", "MG_5_N_24_2"),
+  MG_5_acidic = c("M_5_64_24h", "MG_5_64_1", "MG_5_64_2", "MG_5_A_24_1", "MG_5_A_24_2"),
+  MG_19_neutral = c("M_19_74_24h", "MG_19_74_1_1", "MG_19_74_1_2", "MG_19_N_24_1", "MG_19_N_24_3"),
+  MG_19_acidic = c("M_19_64_24h", "MG_19_64_1", "MG_19_64_2", "MG_19_A_24_1", "MG_19_A_24_2")
+)
+
+
+res$group <- NA
+for (group_name in names(groups)) {
+  res$group[rownames(res) %in% groups[[group_name]]] <- group_name
+}
+
+```
+
+```{r}
+
+your_data <- res[,c(36,20,40,60)]
+
+# Get all unique groups
+groups_unique <- unique(your_data$group)
+
+# Get all numeric columns (excluding the group column)
+numeric_cols <- names(your_data)[sapply(your_data, is.numeric)]
+
+# Create all pairwise combinations of groups
+group_comparisons <- combn(groups_unique, 2, simplify = FALSE)
+comparison_names <- sapply(group_comparisons, function(x) paste(x[1], "-", x[2]))
+
+# Initialize results table
+res_table <- as.data.frame(matrix(ncol = length(comparison_names), 
+                                   nrow = length(numeric_cols)))
+rownames(res_table) <- numeric_cols
+colnames(res_table) <- comparison_names
+
+# Loop through each comparison
+for (m in seq_along(group_comparisons)) {
+  comp <- group_comparisons[[m]]
+  group1 <- comp[1]
+  group2 <- comp[2]
+  
+  cat("\nComparing:", group1, "vs", group2, "\n")
+  
+  # Subset data for these two groups
+  test_sub <- your_data[your_data$group %in% c(group1, group2), ]
+  
+  # Store p-values for adjustment
+  p_values <- numeric(length(numeric_cols))
+  names(p_values) <- numeric_cols
+  
+  # Loop through each numeric column
+  for (i in seq_along(numeric_cols)) {
+    col_name <- numeric_cols[i]
+    
+    # Prepare data for wilcox test
+    test_data <- data.frame(
+      value = test_sub[[col_name]],
+      group = test_sub$group
+    )
+    
+    # Remove NAs
+    test_data <- test_data[complete.cases(test_data), ]
+    
+    # Wilcoxon test
+    res <- wilcox.test(value ~ group, data = test_data)
+    text <- paste("W = ", res$statistic, ", p-value = ", res$p.value, sep = "")
+    
+    # Store p-value
+    p_values[col_name] <- res$p.value
+    
+    # Store result
+    res_table[col_name, m] <- text
+  }
+  
+  # Apply BH correction
+  p_adjusted <- p.adjust(p_values, method = "BH")
+  
+  # Add adjusted p-values to results
+  for (col_name in numeric_cols) {
+    res_table[col_name, m] <- paste(res_table[col_name, m], 
+                                     ", p.adj = ", p_adjusted[col_name], sep = "")
+  }
+}
+
+# View results
+res_table
+
+#write.csv(res_table, "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/In vitro validations/genesets/boxplots/macrophage_pvals_manuscript_12012026.csv")
+
+```
+
+```{r, fig.width=10, fig.height=5}
+library(ggplot2)
+
+#Microglia
+#shared_data <- your_data[,c(1,5,6,14,21,22,24:39,46:52)]
+#shared_data <- your_data[,c(10,11,20,23,40,41,54)]
+shared_data <- your_data[,c(54:60)]
+shared_data <- reshape2::melt(shared_data, measure.vars = c(1:6))
+
+shared_data$oxygen_labels <- sub("^[^_]+_([^_]+)_.*", "oxygen_\\1", shared_data$group)
+shared_data$condition_labels <- sub(".*_", "", shared_data$group)
+shared_data$celltype <- sub("_.*", "", shared_data$group)
+shared_data$condition_labels <- gsub("oxygen", "neutral", shared_data$condition_labels, fixed = T)
+shared_data$oxygen_labels <- paste(shared_data$celltype, shared_data$oxygen_labels, sep = "_")
+
+for (ct in unique(shared_data$variable)) {
+  
+    temp_ct <- subset(shared_data, variable == ct)
+    i <- temp_ct[1,"celltype"]
+    
+    # All samples, split by Sample 
+     p1 <- ggplot(temp_ct, aes(x=factor(oxygen_labels, levels=c("MG_oxygen_0", "MG_oxygen_1", "MG_oxygen_5", "MG_oxygen_19", "MDM_oxygen_0", "MDM_oxygen_1", "MDM_oxygen_5", "MDM_oxygen_19")), y=value, fill = factor(condition_labels, levels=c("neutral", "acidic")))) +
+   
+   geom_boxplot(outlier.shape = NA) + 
+   theme_classic() +
+   labs(title=paste(gsub(".", " ", ct, fixed = T)), x="Condition", y = "Geneset activity score") +
+   guides(fill=guide_legend(title="Group")) +
+   #geom_jitter(position = position_jitter(0.2, 0)) +
+   geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0)) +
+   scale_fill_manual(values=accent_8_colours) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust = 1)) #+
+     #ylim(0, max_y) 
+ print(p1)
+ 
+
+  #ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/In vitro validations/genesets/boxplots/combined04112025/", ct, ".pdf", sep = ""))
+  #ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/In vitro validations/genesets/boxplots/combined04112025/", ct, ".png", sep = ""))
+  
+}
+
+```
+
+
+
+
+## Bulk RNAseq
+
+```{r}
+library(tidyverse)
+
+# Your groups definition
+groups <- list(
+  MDM_0_oxygen = c("M2_0_1", "M2_0_2", "M2_0_24h", "M2_0_N_24_1", "M2_0_N_24_2"),
+  MDM_1_neutral = c("M2_1_1", "M2_1_2", "M2_1_24h", "M2_1_N_24_1", "M2_1_N_24_3"),
+  MDM_1_acidic = c("M2_1_A_24_1", "M2_1_A_24_2", "M2_1_A_24_3", "M2_1_A_24_4"),
+  MDM_5_neutral = c("M2_5_74_1", "M2_5_74_2", "M2_5_74_24h", "M2_5_N_24_1", "M2_5_N_24_2"),
+  MDM_5_acidic = c("M2_5_A_24_1", "M2_5_A_24_2", "M2_5_64_1", "M2_5_64_2", "M2_5_64_24h_merged"),
+  MDM_19_neutral = c("M2_19_74_1", "M2_19_74_2", "M2_19_74_24h", "M2_19_N_24_1", "M2_19_N_24_2", "M2_19N24A1_1", "M2_19N24A1_3"),
+  MDM_19_acidic = c("M2_19_64_1", "M2_19_64_2", "M2_19_64_24h", "M2_19_A_24_1", "M2_19_A_24_2"),
+  
+  MG_0_oxygen = c("M_0_24h", "MG_0_1", "MG_0_2", "MG_0_N_24_1", "MG_0_N_24_4"),
+  MG_1_neutral = c("M_1_24h", "MG_1_1", "MG_1_2", "MG_1_N_24_1", "MG_1_N_24_2"),
+  MG_1_acidic = c("MG_1_A_24_2", "MG_1_A_24_5", "MG_1_A_24_6"),
+  MG_5_neutral = c("M_5_74_24h", "MG_5_74_1", "MG_5_74_2", "MG_5_N_24_1", "MG_5_N_24_2"),
+  MG_5_acidic = c("M_5_64_24h", "MG_5_64_1", "MG_5_64_2", "MG_5_A_24_1", "MG_5_A_24_2"),
+  MG_19_neutral = c("M_19_74_24h", "MG_19_74_1_1", "MG_19_74_1_2", "MG_19_N_24_1", "MG_19_N_24_3"),
+  MG_19_acidic = c("M_19_64_24h", "MG_19_64_1", "MG_19_64_2", "MG_19_A_24_1", "MG_19_A_24_2")
+)
+
+# Create column metadata mapping
+col_metadata <- data.frame(
+  column_name = unlist(groups),
+  group = rep(names(groups), sapply(groups, length))
+)
+
+# Reshape data to long format - PRESERVING ROW NAMES
+df_long <- bulk %>%
+  rownames_to_column("row_id") %>%  # Convert row names to a column first
+  pivot_longer(cols = all_of(col_metadata$column_name), 
+               names_to = "column_name", 
+               values_to = "value") %>%
+  left_join(col_metadata, by = "column_name")
+
+```
+
+```{r boxplot_visualization}
+#Microglia
+
+df_long$oxygen_labels <- sub("^[^_]+_([^_]+)_.*", "oxygen_\\1", df_long$group)
+df_long$condition_labels <- sub(".*_", "", df_long$group)
+df_long$celltype <- sub("_.*", "", df_long$group)
+df_long$condition_labels <- gsub("oxygen", "neutral", df_long$condition_labels, fixed = T)
+df_long$oxygen_labels <- paste(df_long$celltype, df_long$oxygen_labels, sep = "_")
+
+#gene_list <- c("CD68", "MARCO", "CD163", "TMEM119", "SALL1", "P2RY12", "CA9", "VEGFA", "ADM", "PDK1", "ITGAX", "ITGAM", "CD66b", "IBA1", "CD206", "CD204", "OSM", "IL1A", "IL1B", "TNF")
+#gene_list <- c("CEACAM8", "AIF1", "MRC1",  "MSR1")
+#gene_list <- c("CA1", "CA2", "CA3", "CA4", "CA5A", "CA5B", "CA6", "CA7", "CA8", "CA9", "CA10", "CA11", "CA12", "CA13", "CA14")
+#gene_list <- c("CD14", "FUT4", "FCGR3A", "NUPR1", "SNHG12", "SPP1", "MT1X", "HK2", "MARCO", "SERPINB2", "CD163", "SLC2A1", "SLC2A3", "SLC2A5", "HMOX1", "FTL", "FTH1")
+#gene_list <- c("IL1R1", "IL1R2", "IL1RAP", "IL1RAPL1", "IL1RAPL2", "IL1RL1", "IL1RL2", "SIGIRR", "IL18R1", "IL18RAP", "TNFRSF1A", "TNFRSF1B", "TNFRSF4", "TNFRSF6", "TNFRSF8", "TNFRSF9", "TNFRSF10A", "TNFRSF10B", "TNFRSF10C", "TNFRSF10D", "TNFRSF11A", "TNFRSF11B", "TNFRSF12A", "TNFRSF13B", "TNFRSF13C", "TNFRSF14", "TNFRSF17", "TNFRSF18", "TNFRSF19", "TNFRSF21", "TNFRSF25", "TNFSF10", "IL37", "TNFRSF6B")
+gene_list <- c("CD3D")#, "TNFRSF6B")
+#gene_list <- c("NUPR1", "SNHG12", "SPP1", "MT1X", "HK2", "SLC2A1", "SLC2A5", "HMOX1", "FTL", "FTH1", "FUT4", "FCGR3A")
+
+
+for (gene in gene_list) {
+  
+    temp_ct <- subset(df_long, row_id == gene)
+    
+    # All samples, split by Sample 
+     p1 <- ggplot(temp_ct, aes(x=factor(oxygen_labels, levels=c("MG_oxygen_0", "MG_oxygen_1", "MG_oxygen_5", "MG_oxygen_19", "MDM_oxygen_0", "MDM_oxygen_1", "MDM_oxygen_5", "MDM_oxygen_19")), y=value, fill = factor(condition_labels, levels=c("neutral", "acidic")))) +
+   
+   geom_boxplot(outlier.shape = NA) + 
+   theme_classic() +
+   labs(title=paste(gsub(".", " ", gene, fixed = T)), x="Condition", y = "Gene expression") +
+   guides(fill=guide_legend(title="Group")) +
+   #geom_jitter(position = position_jitter(0.2, 0)) +
+   geom_jitter(position = position_jitterdodge(jitter.width = 0.2, jitter.height = 0)) +
+   scale_fill_manual(values=accent_8_colours) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust = 1)) #+
+     #ylim(0, max_y) 
+ print(p1)
+ 
+
+  #ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/In vitro validations/gene_expression/boxplots/IL_TNF_receptors/", gene, ".pdf", sep = ""))
+  #ggsave(paste("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/In vitro validations/gene_expression/boxplots/IL_TNF_receptors/", gene, ".png", sep = ""))
+  
+}
+```
+
+```{r Stats}
+
+df_long$oxygen_labels <- sub("^[^_]+_([^_]+)_.*", "oxygen_\\1", df_long$group)
+df_long$condition_labels <- sub(".*_", "", df_long$group)
+df_long$celltype <- sub("_.*", "", df_long$group)
+df_long$condition_labels <- gsub("oxygen", "neutral", df_long$condition_labels, fixed = T)
+df_long$oxygen_labels <- paste(df_long$celltype, df_long$oxygen_labels, sep = "_")
+
+# Get all unique groups
+groups_unique <- unique(df_long$group)
+
+#gene_list <- c("CA2", "CA9", "CA12") #c("CA1", "CA2", "CA3", "CA4", "CA5A", "CA5B", "CA6", "CA7", "CA8", "CA9", "CA10", "CA11", "CA12", "CA13", "CA14")
+#gene_list <- c("CD68", "MARCO", "CD163", "TMEM119", "SALL1", "P2RY12", "CA9", "VEGFA", "ADM", "PDK1", "ITGAX", "ITGAM", "CEACAM8", "AIF1", "MRC1", "MSR1", "OSM", "IL1A", "IL1B", "TNF")
+
+#gene_list <- c("TNF", "TNFRSF1A", "TNFRSF1B")
+
+gene_list <- c("ITGAM","CD33","HLA-DRA","CD3D","CD19","MS4A1","NCAM1","CD14","FUT4","CEACAM8","OLR1","S100A9","IL4R","KDR","ARG1","NOS2","CD274","PDCD1","CCR2","CXCR4","ENTPD1","NT5E","CD84")
+
+
+# Create all pairwise combinations of groups
+group_comparisons <- combn(groups_unique, 2, simplify = FALSE)
+comparison_names <- sapply(group_comparisons, function(x) paste(x[1], "-", x[2]))
+
+# Initialize results table
+res_table <- as.data.frame(matrix(ncol = length(comparison_names), 
+                                   nrow = length(gene_list)))
+rownames(res_table) <- gene_list
+colnames(res_table) <- comparison_names
+
+# Loop through each comparison
+for (m in seq_along(group_comparisons)) {
+  comp <- group_comparisons[[m]]
+  group1 <- comp[1]
+  group2 <- comp[2]
+  
+  cat("\nComparing:", group1, "vs", group2, "\n")
+  
+  # Subset data for these two groups
+  test_sub <- df_long[df_long$group %in% c(group1, group2), ]
+  
+  # Store p-values for adjustment
+  p_values <- numeric(length(gene_list))
+  names(p_values) <- gene_list
+  
+  # Loop through each numeric column
+  for (i in seq_along(gene_list)) {
+    col_name <- gene_list[i]
+    
+    # Prepare data for wilcox test
+    # test_data <- data.frame(
+    #   value = test_sub[[col_name]],
+    #   group = test_sub$group
+    # )
+    test_data <- subset(test_sub, row_id == col_name)
+    
+    # Remove NAs
+    test_data <- test_data[complete.cases(test_data), ]
+    
+    # Wilcoxon test
+    res <- wilcox.test(value ~ group, data = test_data)
+    text <- paste("W = ", res$statistic, ", p-value = ", res$p.value, sep = "")
+    
+    # Store p-value
+    p_values[col_name] <- res$p.value
+    
+    # Store result
+    res_table[col_name, m] <- text
+  }
+  
+  # Apply BH correction
+  p_adjusted <- p.adjust(p_values, method = "BH")
+  
+  # Add adjusted p-values to results
+  for (col_name in gene_list) {
+    res_table[col_name, m] <- paste(res_table[col_name, m], 
+                                     ", p.adj = ", p_adjusted[col_name], sep = "")
+  }
+}
+
+# View results
+res_table
+
+#write.csv(res_table, "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/In vitro validations/gene_expression/macros_micros_eMDSC_Genes_pvalues_27012026.csv")
+
+```
+
+
+# Log2 scaling
+```{r}
+# Your groups definition
+groups <- list(
+  MDM_0_oxygen = c("M2_0_1", "M2_0_2", "M2_0_24h", "M2_0_N_24_1", "M2_0_N_24_2"),
+  MDM_1_neutral = c("M2_1_1", "M2_1_2", "M2_1_24h", "M2_1_N_24_1", "M2_1_N_24_3"),
+  MDM_1_acidic = c("M2_1_A_24_1", "M2_1_A_24_2", "M2_1_A_24_3", "M2_1_A_24_4"),
+  MDM_5_neutral = c("M2_5_74_1", "M2_5_74_2", "M2_5_74_24h", "M2_5_N_24_1", "M2_5_N_24_2"),
+  MDM_5_acidic = c("M2_5_A_24_1", "M2_5_A_24_2", "M2_5_64_1", "M2_5_64_2", "M2_5_64_24h_merged"),
+  MDM_19_neutral = c("M2_19_74_1", "M2_19_74_2", "M2_19_74_24h", "M2_19_N_24_1", "M2_19_N_24_2", "M2_19N24A1_1", "M2_19N24A1_3"),
+  MDM_19_acidic = c("M2_19_64_1", "M2_19_64_2", "M2_19_64_24h", "M2_19_A_24_1", "M2_19_A_24_2"),
+
+  MG_0_oxygen = c("M_0_24h", "MG_0_1", "MG_0_2", "MG_0_N_24_1", "MG_0_N_24_4"),
+  MG_1_neutral = c("M_1_24h", "MG_1_1", "MG_1_2", "MG_1_N_24_1", "MG_1_N_24_2"),
+  MG_1_acidic = c("MG_1_A_24_2", "MG_1_A_24_5", "MG_1_A_24_6"),
+  MG_5_neutral = c("M_5_74_24h", "MG_5_74_1", "MG_5_74_2", "MG_5_N_24_1", "MG_5_N_24_2"),
+  MG_5_acidic = c("M_5_64_24h", "MG_5_64_1", "MG_5_64_2", "MG_5_A_24_1", "MG_5_A_24_2"),
+  MG_19_neutral = c("M_19_74_24h", "MG_19_74_1_1", "MG_19_74_1_2", "MG_19_N_24_1", "MG_19_N_24_3"),
+  MG_19_acidic = c("M_19_64_24h", "MG_19_64_1", "MG_19_64_2", "MG_19_A_24_1", "MG_19_A_24_2")
+)
+
+# Create column metadata mapping
+col_metadata <- data.frame(
+  column_name = unlist(groups),
+  group = rep(names(groups), sapply(groups, length))
+)
+
+
+# groups: list of sample groups
+# bulk: expression matrix (genes as rows, samples as columns)
+
+# Calculate average expression per group
+group_means <- sapply(groups, function(sample_names) {
+  # Select columns for this group
+  selected_cols <- intersect(sample_names, colnames(bulk))
+  
+  # Compute row-wise mean for these columns
+  rowMeans(log2(bulk[, selected_cols, drop = FALSE]+1), na.rm = TRUE)
+})
+
+# Convert to data frame and preserve gene names
+group_means_df <- as.data.frame(group_means)
+group_means_df <- tibble::rownames_to_column(group_means_df, var = "gene")
+
+# Scale rows
+centered_matrix <- t(apply(group_means_df[,-1], 1, function(x) x - mean(x))) #mean
+#centered_matrix <- t(apply(group_means_df[,-1], 1, function(x) x - median(x))) #median
+
+# Restore row and column names
+rownames(centered_matrix) <- group_means_df$gene
+colnames(centered_matrix) <- colnames(group_means_df)[-1]
+
+# Combine into final data frame
+scaled_df <- data.frame(gene = rownames(centered_matrix), centered_matrix, check.names = FALSE)
+
+# Check result
+scaled_df
+
+```
+
+
+```{r, fig.height=6, fig.width=7}
+library(ComplexHeatmap)
+
+#gene_list <- c("CA1", "CA2", "CA3", "CA4", "CA5A", "CA5B", "CA6", "CA7", "CA8", "CA9", "CA10", "CA11", "CA12", "CA13", "CA14")
+#gene_list <- c("CD68", "MARCO", "CD163", "TMEM119", "SALL1", "P2RY12", "CA9", "VEGFA", "ADM", "PDK1", "ITGAX", "ITGAM", "CEACAM8", "AIF1", "MRC1", "MSR1", "OSM", "IL1A", "IL1B", "TNF")
+# Jackson E-mdsc
+#gene_list <- c("TPI1","FAM162A","GSTO1","MIF","PKM","GAPDH","LGALS3","LGALS1","PGK1","ADM","LDHA","CD63","CSTB","HMOX1","S100A10","CTSB","VKORC1","C15orf48","PLIN2","ATP6V1F","ATF3","BRI3","CTSL","FCGR2B","SLC16A10","CLEC2B","FABP5","FTL","SEC61G","RAB42","P4HB","MSR1","MGAT1","SPP1","ANXA5","ANXA1","HSPA5","VIM","ANXA2","CTSD")
+
+#Jackson M mdsc
+#gene_list <- c("ENO1","GSTO1","ANGPTL4","MIF","TXN","S100A10","CSTB","SH3BGRL3","GAPDH","PKM","PGK1","CXCL8","S100A6","UPP1","LDHA","TMSB10","TIMP1","LGALS1","LGALS3","EMP3","C15orf48","S100A4","LSP1","PLP2","ANXA2","ACP5","FBP1","CD44","SLC39A8","ANXA5","EMILIN2","IL1RN","AQP9","CCL20","S100A8","S100A9","TES","TGFBI","FNDC3B","FN1","P4HB","ANXA1","VIM","KYNU","CSTA","CD163","FCGR2B","SOD2","CLEC5A","NAMPT","SLC16A10","ANPEP","CD93","ACTN1","TNFAIP6","MAP3K20","AREG","THBS1","THBD","SEC61G")
+
+#gene_list <- c("IL1A", "IL1B", "TNF")
+#gene_list <- c("CA12", "CA9", "CA2")
+
+#gene_list <- c("CD14", "FUT4", "FCGR3A", "NUPR1", "SPP1", "MT1X", "HK2", "MARCO", "SERPINB2", "CD163", "SLC2A1", "SLC2A3", "SLC2A5", "HMOX1", "FTL", "FTH1") #"SNHG12",
+
+#gene_list <- c("IL1R1", "IL1R2", "IL1RAP", "IL1RAPL1", "IL1RAPL2", "IL1RL1", "IL1RL2", "SIGIRR", "IL18R1", "IL18RAP", "TNFRSF1A", "TNFRSF1B", "TNFRSF4", "TNFRSF8", "TNFRSF9", "TNFRSF10A", "TNFRSF10B", "TNFRSF10C", "TNFRSF10D", "TNFRSF11A", "TNFRSF11B", "TNFRSF12A", "TNFRSF13B", "TNFRSF13C", "TNFRSF14", "TNFRSF17", "TNFRSF18", "TNFRSF19", "TNFRSF21", "TNFRSF25", "TNFSF10", "IL37") #"TNFRSF6","TNFRSF6B"
+
+#gene_list <- c("NUPR1", "SPP1", "MT1X", "HK2", "SLC2A1", "SLC2A5", "HMOX1", "FTL", "FTH1", "FUT4", "FCGR3A")#"SNHG12",
+
+#gene_list <- c("IL1R1", "IL1R2", "IL1RAP", "TNFRSF1A", "TNFRSF1B", "TNFRSF10B", "TNFSF10")
+
+#gene_list <- c("TNF", "TNFRSF1A", "TNFRSF1B")
+
+gene_list <- c("ITGAM","CD33","HLA-DRA","CD3D","CD19","MS4A1","NCAM1","CD14","FUT4","CEACAM8","OLR1","S100A9","IL4R","KDR","ARG1","NOS2","CD274","PDCD1","CCR2","CXCR4","ENTPD1","NT5E","CD84")
+
+
+
+sub_group_means_df <- scaled_df[gene_list, ]
+sub_group_means_df$gene <- NULL
+
+#pdf("C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/In vitro validations/gene_expression/heatmaps/emdsc_geenit_MDMOnly_27012026.pdf", width = 7, height = 6)
+
+# Calculate the maximum value across groups for each gene
+max_values_all <- apply(group_means, 1, max)
+max_values <- max_values_all[gene_list]
+
+# Create the barplot annotation
+bar_annotation <- rowAnnotation(
+  max_expr = anno_barplot(
+    max_values,
+    width = unit(2, "cm")))
+
+Heatmap(sub_group_means_df,
+        cluster_columns = F,
+        right_annotation = bar_annotation
+        #cell_fun = function(j, i, x, y, width, height, fill) {
+          #grid.text(sprintf("%.2f", sub_group_means_df[i, j]), x, y, gp = gpar(fontsize = 8, col = "black")) }
+)
+
+#dev.off()
+
+
+
+```
+
+
+```{r}
+#Look into the expression of genes we have in the manu
+gene_list <- c("IL1A", "IL1B", "TNF", "CA9", "CA12", "CA2")
+
+rownames(group_means_df) <- group_means_df$gene
+
+sub <- group_means_df[gene_list,]
+
+#write.csv(sub, file = "C:/Users/is427866/OneDrive - TUNI.fi/Hypoksia projekti/In vitro validations/gene_expression/gene_average_exp_fig4_log2.csv")
+
+```
+
+
+
+
+
+
+
+
+
