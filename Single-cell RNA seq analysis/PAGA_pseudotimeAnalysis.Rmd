@@ -1,0 +1,324 @@
+---
+title: "Pseudotime"
+output: html_document
+date: "2025-02-17"
+---
+
+# Read data in
+
+```{r}
+library(Seurat)
+#library(qs)
+library(dplyr)
+library(readxl)
+
+```
+
+```{r}
+glioblastoma_scRNAseq_Seurat_Harmony <- readRDS("/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/Seurat_objects/unfiltered_glioblastoma_scRNAseq_Harmony_Iina_Hypoxia_01072025.RDS")
+
+```
+
+## Venn segment genesets
+```{r}
+# Make gene sets out of the Venn segments, and run AddModuleScore on those gene sets
+#load("/scratch/svc_td_cri/glioma_scs_st/Narvi_glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/regional_genes_between_cell_types_high_hypoxia_vs_normoxia.RData")
+load("/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/High_hypoxia_vs_normoxia_differentially_expressed_genes_UP_overlaps_list.RData")
+load("/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/DE_genes/Iina_hypoxia_DGE/High_hypoxia_vs_normoxia_differentially_expressed_genes_DOWN_overlaps_list.RData")
+
+M2_M1_macrophages_UP <- unlist(DEG_overlaps_hypoxia_UP_list[[5]])
+M1_macrophages_UP <- unlist(DEG_overlaps_hypoxia_UP_list[[2]])
+M2_macrophages_UP <- unlist(DEG_overlaps_hypoxia_UP_list[[1]])
+
+M2_M1_macrophages_DOWN <- unlist(DEG_overlaps_hypoxia_DOWN_list[[5]])
+M1_macrophages_DOWN <- unlist(DEG_overlaps_hypoxia_DOWN_list[[2]])
+M2_macrophages_DOWN <- unlist(DEG_overlaps_hypoxia_DOWN_list[[1]])
+
+
+M2_M1_microglia_UP <- unlist(DEG_overlaps_hypoxia_UP_list[[10]])
+M2_microglia_UP <- unlist(DEG_overlaps_hypoxia_UP_list[[4]])
+M1_microglia_UP <- unlist(DEG_overlaps_hypoxia_UP_list[[3]])
+
+M2_M1_microglia_DOWN <- unlist(DEG_overlaps_hypoxia_DOWN_list[[10]])
+M2_microglia_DOWN <- unlist(DEG_overlaps_hypoxia_DOWN_list[[4]])
+M1_microglia_DOWN <- unlist(DEG_overlaps_hypoxia_DOWN_list[[3]])
+
+```
+
+
+
+## Geneset activities
+```{r}
+glioblastoma_scRNAseq_Seurat_Harmony <- AddModuleScore(glioblastoma_scRNAseq_Seurat_Harmony, features = list(M2_M1_macrophages_UP, M1_macrophages_UP, M2_macrophages_UP, M2_M1_macrophages_DOWN, M1_macrophages_DOWN, M2_macrophages_DOWN), search = TRUE )
+
+colnames(glioblastoma_scRNAseq_Seurat_Harmony@meta.data)[(ncol(glioblastoma_scRNAseq_Seurat_Harmony@meta.data)-5):(ncol(glioblastoma_scRNAseq_Seurat_Harmony@meta.data))] <- c("M2_M1_macrophages_UP", "M1_macrophages_UP", "M2_macrophages_UP", "M2_M1_macrophages_DOWN", "M1_macrophages_DOWN", "M2_macrophages_DOWN")
+
+```
+
+
+
+```{r}
+kevin_gene_sets <- read_excel("/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/gene_sets/Gene_sets_for_Kevin_updated20112025.xlsx")
+
+#kevin_gene_sets <- kevin_gene_sets[,c(1:19, 71:72)]
+
+kevin_gene_sets <- lapply(kevin_gene_sets, function(x) x[!is.na(x)])
+list_members <- c(1:length(kevin_gene_sets))
+
+glioblastoma_scRNAseq_Seurat_Harmony <- AddModuleScore(glioblastoma_scRNAseq_Seurat_Harmony, features = as.list(na.omit(kevin_gene_sets)), search = TRUE )
+colnames(glioblastoma_scRNAseq_Seurat_Harmony@meta.data) <- c(colnames(glioblastoma_scRNAseq_Seurat_Harmony@meta.data)[1:(length(colnames(glioblastoma_scRNAseq_Seurat_Harmony@meta.data)) - length(kevin_gene_sets[list_members]))], names(kevin_gene_sets[list_members]))
+
+```
+
+```{r}
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+glioblastoma_scRNAseq_Seurat_Harmony <- AddModuleScore(glioblastoma_scRNAseq_Seurat_Harmony, features = list(s.genes, g2m.genes), search = TRUE )
+
+colnames(glioblastoma_scRNAseq_Seurat_Harmony@meta.data)[(ncol(glioblastoma_scRNAseq_Seurat_Harmony@meta.data)-1):(ncol(glioblastoma_scRNAseq_Seurat_Harmony@meta.data))] <- c("S.genes", "G2M.genes")
+
+
+```
+
+
+## PAGA analysis
+
+```{r}
+# PAGA analysis
+
+pseudotime <- read.csv("/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/Seurat_objects/hypoxia/pseudotime/dpt_pseudotimes/MACROS_dpt_1510_check_no45.csv")
+
+rownames(pseudotime) <- pseudotime$X
+
+macros <- subset(glioblastoma_scRNAseq_Seurat_Harmony, cells = rownames(pseudotime)) 
+
+```
+
+#Pseudotime DE gene analysis
+
+
+```{r}
+#DEG version 2
+pseudotime$X <- NULL
+stopifnot(identical(rownames(pseudotime), colnames(macros)))
+genes <- VariableFeatures(macros)
+
+# Extract all gene expression data at once
+expr_matrix <- FetchData(macros, vars = genes, slot = "data")
+pseudotime_vec <- pseudotime$dpt_pseudotime
+
+# Vectorized regression using matrix operations
+n <- length(pseudotime_vec)
+X <- cbind(1, pseudotime_vec)  # Design matrix
+XtX_inv <- solve(t(X) %*% X)   # Pre-compute (X'X)^-1
+
+# Calculate coefficients for all genes at once
+coefficients_matrix <- XtX_inv %*% t(X) %*% as.matrix(expr_matrix)
+coefficients <- coefficients_matrix[2, ]  # Pseudotime coefficients
+
+# Calculate residuals and standard errors
+fitted_values <- X %*% coefficients_matrix
+residuals <- as.matrix(expr_matrix) - fitted_values
+mse <- colSums(residuals^2) / (n - 2)
+se_coef <- sqrt(mse * XtX_inv[2, 2])
+
+# Calculate t-statistics and p-values
+t_stats <- coefficients / se_coef
+p_values <- 2 * pt(abs(t_stats), df = n - 2, lower.tail = FALSE)
+
+# Create results dataframe
+results_df <- data.frame(
+  gene = names(coefficients),
+  coefficient = coefficients,
+  p_value = p_values,
+  direction = ifelse(coefficients > 0, "Up", "Down"),
+  p_adj = p.adjust(p_values, method = "BH")
+)
+
+# Sort by significance
+results_df <- results_df[order(results_df$p_adj), ]
+
+# Filter for significance
+sig_genes <- results_df[results_df$p_adj < 0.05 & abs(results_df$coefficient) > 0.25, ]
+
+print("Script succesful")
+
+#write.csv(as.data.frame(sig_genes), file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/Seurat_objects/hypoxia/pseudotime/NEW_microglia_PAGA_DEgenes_FCfiltered_16102025.csv")
+```
+
+
+```{r}
+
+p_values <- as.data.frame(p_values)
+sig_p_values2 <- subset(p_values, p_values < 0.001)
+
+```
+
+
+```{r}
+#Subset pseudotime and Seurat object to have only macrophages or microglia
+
+#macros <- subset(macros, selected_annotations %in% c("MG CD163-", "MG CD163+"))
+macros <- subset(macros, selected_annotations %in% c("MDM CD163-", "MDM CD163+"))
+
+pseudotime <- subset(pseudotime, X %in% colnames(macros))
+
+```
+
+```{r}
+metadata_vector <- pseudotime$dpt_pseudotime
+names(metadata_vector) <- pseudotime$X  
+
+macros <- AddMetaData(macros, 
+                            metadata = metadata_vector, 
+                            col.name = "pseudotime")
+
+macros <- subset(macros, pseudotime > 0.50)
+```
+
+
+# Visualizations
+
+# Scaled visualization
+
+```{r manuscript, fig.width=25, fig.height=15}
+# heatmap visualization along pseudotime
+library(dplyr)
+
+
+genes_of_interest <- c("CA9", "VEGFA", "PDK1", "ADM", "TMEM119", "CD163", "CD4", "MKI67", "CD68", "CD14", "FUT4")#, "CD3E", "FCER1A", "CD1C", "ITGAX", "LILRA4", "CLEC4C", "IRF7", "IRF8", "CD209")
+
+heatmap_data = macros@assays$RNA@data[genes_of_interest,] %>% as.data.frame()
+
+# order pseudotime
+pseudotime <- as.data.frame(pseudotime[order(pseudotime$dpt_pseudotime), ])
+
+# select metadata that is to be merged
+merge_to_pseudotime <- as.data.frame(macros@meta.data[,c(12, 16:19,20:72)])
+merge_to_pseudotime$cell <- rownames(macros@meta.data)
+
+#merge datas
+pseudotime <- merge(pseudotime, merge_to_pseudotime, by.x = "X", by.y = "cell")
+
+  # Reorder columns of heatmap to match the order of rows in pseudotime
+pseudotime <- as.data.frame(pseudotime[order(pseudotime$dpt_pseudotime), ])
+rownames(pseudotime) <- pseudotime$X
+
+heatmap_data <- heatmap_data[, pseudotime$X]
+
+library(ComplexHeatmap)
+library(RColorBrewer)
+library(viridis)
+library(circlize)
+
+heatmap_data = apply(heatmap_data, 1, function(x) { scales::rescale(x, to=c(0,1))}) %>% t() %>% as.data.frame() 
+heatmap_data = apply(heatmap_data, 1,  function(x) { smooth.spline(x)$y}) %>% t() %>% as.data.frame() %>% setNames(colnames(heatmap_data))
+heatmap_data = apply(heatmap_data, 1, function(x) { scales::rescale(x, to=c(0,1))}) %>% t() %>% as.data.frame() 
+
+# Spline, uncomment to use this vizualization and comment the current
+#pseudotime_genesets = apply(t(pseudotime[,c(5,8:60)]), 1, function(x) { scales::rescale(x, to=c(0,1))}) %>% t() %>% as.data.frame() 
+#pseudotime_genesets = apply(pseudotime_genesets, 1,  function(x) { smooth.spline(x)$y}) %>% t() %>% as.data.frame() %>% setNames(colnames(pseudotime_genesets))
+#pseudotime_genesets = apply(pseudotime_genesets, 1, function(x) { scales::rescale(x, to=c(0,1))}) %>% as.data.frame() 
+
+# Only scaled
+pseudotime_genesets = apply(t(pseudotime[,c(5,8:60)]), 1, function(x) { scales::rescale(x, to=c(0,1))}) %>% as.data.frame() 
+
+heatmap_data <- heatmap_data[, pseudotime$X]
+
+heatmap_data$index = apply(heatmap_data , 1 , function(x) { order(x,decreasing=T)[1]})
+heatmap_data = heatmap_data %>% arrange(index)
+heatmap_data$index = NULL
+
+col_fun = colorRamp2(c(0, 0.5, 1), c("#000435", "#40e0d0", "#f6ef9b"))
+col_fun2 = colorRamp2(c(-1, 0, 2.5), c("blue", "#d3d3d3", "#f43c1d"))
+col_fun3 = colorRamp2(c(0, 0.5, 1), c("blue", "#d3d3d3", "#f43c1d"))
+
+column_ha = HeatmapAnnotation(Pseudotime = pseudotime$dpt_pseudotime, 
+                              Hypoxia = pseudotime$hypoxia_classification,
+                              Hypoxia_score = pseudotime_genesets$hypoxia_score,
+                              celltype = pseudotime$selected_annotations,
+                              # Formatted column names
+
+phagocytosis_combined_GOBP_HP_WP_TCGA_correlation_filtered_cluster1 = pseudotime_genesets$phagocytosis_combined_GOBP_HP_WP_TCGA_correlation_filtered_cluster1,
+positive.regulation.of.leukocyte.activation_TCGA_correlation_filtered_all = pseudotime_genesets$positive.regulation.of.leukocyte.activation_TCGA_correlation_filtered_all,
+EINAV_INTERFERON_SIGNATURE_IN_CANCER_TCGA_correlation_filtered_all = pseudotime_genesets$EINAV_INTERFERON_SIGNATURE_IN_CANCER_TCGA_correlation_filtered_all,
+HLA_genes = pseudotime_genesets$HLA_genes,
+IPA_CD163negMDM_cellsurvival = pseudotime_genesets$IPA_CD163negMDM_cellsurvival,
+VENN_M2_M1_macrophages_UP = pseudotime_genesets$VENN_M2_M1_macrophages_UP,
+Jackson_E_MDSC_all = pseudotime_genesets$`Jackson_E-MDSC_all`,
+Jackson_M_MDSC_all = pseudotime_genesets$`Jackson_M-MDSC_all`,
+                              
+                              col = list(
+  Pseudotime = col_fun,
+  Hypoxia_score = col_fun3,
+  Hypoxia = c("normoxia" = "#b7e56f", "low hypoxia" = "#ffa100", "high hypoxia" = "#f43c1d"),
+  celltype = c("MDM CD163+" = "#9bf6f3",
+               "MDM CD163-" = "#258dc1",
+               "MG CD163+" = "#efe164",
+               "MG CD163-" = "#ef7b09"),
+  Hallmark_TNFA_signaling_via_NFKB_TCGA_correlation_filtered_all = col_fun3,
+  Hallmark_TNFA_signaling_via_NFKB_TCGA_correlation_filtered_cluster1 = col_fun3,
+  Hallmark_TNFA_signaling_via_NFKB_TCGA_correlation_filtered_cluster2 = col_fun3,
+  Hallmark_TNFA_signaling_via_NFKB_TCGA_correlation_filtered_cluster3 = col_fun3,
+  LPS_combined_TCGA_correlation_all = col_fun3,
+  TNF_combined_SANA_PHONG_TCGA_correlation_filtered_all = col_fun3,
+  TNF_combined_SANA_PHONG_TCGA_correlation_filtered_cluster1 = col_fun3,
+  TNF_combined_SANA_PHONG_TCGA_correlation_filtered_cluster2 = col_fun3,
+  TNF_combined_SANA_PHONG_TCGA_correlation_filtered_cluster3 = col_fun3,
+  phagocytosis_combined_GOBP_HP_WP_TCGA_correlation_filtered_cluster1 = col_fun3,
+  positive.regulation.of.leukocyte.activation_TCGA_correlation_filtered_all = col_fun3,
+  EINAV_INTERFERON_SIGNATURE_IN_CANCER_TCGA_correlation_filtered_all = col_fun3,
+  HLA_genes = col_fun3,
+  IPA_CD163negMDM_cellsurvival = col_fun3,
+  VENN_M2_M1_macrophages_UP = col_fun3,
+  Jackson_E_MDSC_all = col_fun3,
+  Jackson_M_MDSC_all = col_fun3),
+                              show_legend = c(T, T, T, T, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F))
+
+pdf(file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/data/Seurat_objects/hypoxia/pseudotime/Figures/MDM_selected_scaled_newPseudotime_28012026.pdf", width = 25, height = 18)
+
+Heatmap(as.matrix(heatmap_data), 
+        cluster_rows = F, 
+        cluster_columns = F, 
+        top_annotation = column_ha, 
+        show_column_names = F,
+        raster_by_magick = F)
+
+dev.off()
+
+
+```
+
+# Investigate the weird cluster of cells (cluster that was removed in the end)
+
+```{r, fig.width=7, fig.height=5}
+colnames(sub@meta.data)
+ggplot(sub@meta.data, aes(x=pseudotime, y=seurat_clusters, color=factor(preliminary_cell_types))) + geom_point() 
+ggplot(sub@meta.data, aes(x=pseudotime, y=orig.ident, color=factor(preliminary_cell_types))) + geom_point() 
+ggplot(sub@meta.data, aes(x=pseudotime, y=nCount_RNA, color=factor(preliminary_cell_types))) + geom_point() 
+ggplot(sub@meta.data, aes(x=pseudotime, y=nFeature_RNA, color=factor(preliminary_cell_types))) + geom_point() 
+ggplot(sub@meta.data, aes(x=pseudotime, y=percent.mt, color=factor(preliminary_cell_types))) + geom_point()
+ggplot(sub@meta.data, aes(x=pseudotime, y=Phase, color=factor(preliminary_cell_types))) + geom_point()
+ggplot(sub@meta.data, aes(x=pseudotime, y=filttered_data_set_annotation, color=factor(preliminary_cell_types))) + geom_point()
+
+table(macros$seurat_clusters, macros$filttered_data_set_annotation)
+```
+
+```{r}
+library(ggplot2)
+plot_df <- subset(glioblastoma_scRNAseq_Seurat_Harmony, selected_annotations != "Cancer cells")
+
+pdf(file = "/scratch/svc_td_cri/projects/glioma_scs_st/Narvi_glioma_scRNAseq/Figures/Dotplot_CAgenes_20102025_3.pdf", height = 7, width = 4)
+
+DotPlot(plot_df, features = c("CA1", "CA2", "CA3", "CA4", "CA5A", "CA5B", "CA6", "CA7", "CA8", "CA9", "CA10", "CA11", "CA12", "CA13", "CA14"), group.by = "selected_annotations") +
+coord_flip() + scale_colour_gradient2(low = "blue", mid = '#d3d3d3', high = "red") +
+xlab("Gene") + ylab("Cluster") +
+#plot_annotation(title = "") +
+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+dev.off()
+```
+
+
+
