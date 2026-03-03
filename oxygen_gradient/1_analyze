@@ -1,0 +1,7 @@
+#!/usr/bin/env bash 
+
+source activate oxy
+
+python analyze.py data/test_sample/microglia_raw_images-acidic_region1.xml data/test_sample/microglia_raw_images-acidic_region1/
+
+
